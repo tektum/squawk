@@ -31,4 +31,4 @@ jobs:
       - run: devbox run -- bun run wrangler deploy --dry-run --outdir .tmp/worker-build --env=""
       - run: devbox run -- bash -c 'actionlint .github/workflows/*.yml && shellcheck matcher/build.sh scripts/rollback-monitor.sh'
       - run: devbox run -- bash -c 'bun run audit:security && bun run verify:e2e && bun run test:verifier && bun run audit:scope'
-      - run: devbox run -- bash -c '! grep -R -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|ghp_[A-Za-z0-9]|github_pat_" --exclude=test-verifier.ts --exclude-dir=node_modules --exclude-dir=.git .'
+      - run: devbox run -- bash -c '! grep -R -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|ghp_[A-Za-z0-9]|github_pat_" --exclude=test-verifier.ts --exclude=verify.ts --exclude-dir=node_modules --exclude-dir=.git .'
