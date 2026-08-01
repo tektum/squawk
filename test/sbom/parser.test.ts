@@ -74,4 +74,25 @@ describe("SBOM predicate parser", () => {
       }),
     ).toThrow();
   });
+
+  it("keeps the PURL when SPDX includes other external references", () => {
+    const [component] = parsePredicate({
+      spdxVersion: "SPDX-2.3",
+      packages: [
+        {
+          name: "demo",
+          versionInfo: "1.0.0",
+          externalRefs: [
+            {
+              referenceType: "cpe23Type",
+              referenceLocator: "cpe:2.3:a:example:demo:1.0.0:*:*:*:*:*:*:*",
+            },
+            { referenceType: "purl", referenceLocator: "pkg:npm/demo@1.0.0" },
+          ],
+        },
+      ],
+    });
+
+    expect(component).toMatchObject({ packageName: "demo", ecosystem: "npm" });
+  });
 });

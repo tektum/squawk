@@ -18,7 +18,9 @@ const spdxSchema = z.object({
         name: z.string().min(1),
         versionInfo: z.string().min(1),
         externalRefs: z
-          .array(z.object({ referenceType: z.literal("purl"), referenceLocator: purlSchema }))
+          .array(
+            z.object({ referenceType: z.string().min(1), referenceLocator: z.string().min(1) }),
+          )
           .min(1),
       }),
     )
@@ -74,9 +76,9 @@ export function parsePredicate(predicate: unknown): readonly Component[] {
   const components = cyclonedx.success
     ? cyclonedx.data.components.map((component) => componentFrom(component.purl, component.version))
     : spdxSchema.parse(predicate).packages.map((pkg) => {
-        const reference = pkg.externalRefs[0];
+        const reference = pkg.externalRefs.find((candidate) => candidate.referenceType === "purl");
         if (!reference) throw new z.ZodError([]);
-        return componentFrom(reference.referenceLocator, pkg.versionInfo);
+        return componentFrom(purlSchema.parse(reference.referenceLocator), pkg.versionInfo);
       });
   const identities = new Set(
     components.map((component) => `${component.purl}\u0000${component.version}`),
