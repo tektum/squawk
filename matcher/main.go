@@ -50,7 +50,7 @@ func evaluate(input request) response {
 	}
 	for _, affected := range input.Ranges {
 		if affected.Type != "ECOSYSTEM" && affected.Type != "SEMVER" {
-			return response{Kind: "unsupported", Reason: "unsupported range type"}
+			continue
 		}
 		isAffected := false
 		for _, boundary := range affected.Events {
