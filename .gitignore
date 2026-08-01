@@ -3,6 +3,8 @@ dist/
 .tmp/
 .wrangler/
 .omo/
+AGENTS.md
+evidence/
 SPEC.md
 src/generated/
 worker-configuration.d.ts
