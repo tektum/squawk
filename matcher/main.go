@@ -48,8 +48,10 @@ func evaluate(input request) response {
 			return response{Kind: "match"}
 		}
 	}
+	unsupportedRange := false
 	for _, affected := range input.Ranges {
 		if affected.Type != "ECOSYSTEM" && affected.Type != "SEMVER" {
+			unsupportedRange = true
 			continue
 		}
 		isAffected := false
@@ -90,6 +92,9 @@ func evaluate(input request) response {
 		if isAffected {
 			return response{Kind: "match"}
 		}
+	}
+	if unsupportedRange {
+		return response{Kind: "unsupported", Reason: "unsupported range type"}
 	}
 	return response{Kind: "no_match"}
 }
