@@ -7,10 +7,6 @@ const verify = (mode: string) =>
     [
       "scripts/verify.ts",
       mode,
-      "--verity-dir",
-      "../verity-images-squawk",
-      "--baseline",
-      "3163fae8bd874840cab5f6ad668bc92db3a659c7",
     ],
     { encoding: "utf8" },
   );
