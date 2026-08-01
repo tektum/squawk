@@ -18,6 +18,10 @@ run "create_lifecycle" {
     error_message = "worker name drifted"
   }
   assert {
+    condition     = cloudflare_workers_script.squawk.main_module == "worker.js"
+    error_message = "Worker must deploy as an ES module"
+  }
+  assert {
     condition     = output.worker_configuration.d1_binding == "DB" && output.worker_configuration.cron == "0 */4 * * *"
     error_message = "D1 or cron wiring drifted"
   }

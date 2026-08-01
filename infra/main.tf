@@ -72,7 +72,7 @@ resource "cloudflare_workers_script" "squawk" {
   script_name        = local.worker_name
   content_file       = var.worker_bundle_path
   content_sha256     = filesha256(var.worker_bundle_path)
-  content_type       = "application/javascript"
+  main_module        = basename(var.worker_bundle_path)
   compatibility_date = "2026-08-01"
   bindings           = local.bindings
   observability = {
