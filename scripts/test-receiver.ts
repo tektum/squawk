@@ -34,7 +34,11 @@ const run = (body: string, response: string) => {
   writeFileSync(payloadPath, body);
   return spawnSync(
     "bash",
-    ["../verity-images-squawk/scripts/monitor_sboms.sh", "--squawk-payload", payloadPath],
+    [
+      `${process.env.VERITY_DIR ?? "../verity-images-squawk"}/scripts/monitor_sboms.sh`,
+      "--squawk-payload",
+      payloadPath,
+    ],
     {
       encoding: "utf8",
       env: {
