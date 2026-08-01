@@ -16,11 +16,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: tektum/verity-images
-          ref: feat/squawk-platform-predicates
+          ref: f8fecba94242071ef5d8e8facb8af62a14773a01
           path: verity-images-squawk
+          persist-credentials: false
       - run: mv verity-images-squawk ../verity-images-squawk
       - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
         with:
@@ -31,4 +33,4 @@ jobs:
       - run: devbox run -- bun run wrangler deploy --dry-run --outdir .tmp/worker-build --env=""
       - run: devbox run -- bash -c 'actionlint .github/workflows/*.yml && shellcheck matcher/build.sh scripts/rollback-monitor.sh'
       - run: devbox run -- bash -c 'bun run audit:security && bun run verify:e2e && bun run test:verifier && bun run audit:scope'
-      - run: devbox run -- bash -c '! grep -R -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|ghp_[A-Za-z0-9]|github_pat_" --exclude=test-verifier.ts --exclude=verify.ts --exclude=ci.yml --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.devbox --exclude-dir=.tmp .'
+      - run: devbox run -- bash -c 'if grep -Rl -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|ghp_[A-Za-z0-9]|github_pat_" --exclude=test-verifier.ts --exclude=verify.ts --exclude=ci.yml --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.devbox --exclude-dir=.tmp .; then exit 1; else status=$?; [ "$status" -eq 1 ] || exit "$status"; fi'
