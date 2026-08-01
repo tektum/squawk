@@ -12,8 +12,15 @@ jobs:
   worker:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      VERITY_DIR: verity-images-squawk
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: tektum/verity-images
+          ref: feat/squawk-platform-predicates
+          path: verity-images-squawk
       - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
         with:
           devbox-version: "0.17.5"
