@@ -84,4 +84,56 @@ describe("SBOM ingestion and historical backfill", () => {
         .first("backfill_status"),
     ).toBe("complete");
   });
+
+  it("returns a retry when concurrent submissions race on the SBOM identity", async () => {
+    const predicate = {
+      bomFormat: "CycloneDX",
+      components: [{ name: "demo", version: "1.5.0", purl: "pkg:npm/demo@1.5.0" }],
+    };
+    const input = sbomInputSchema.parse({
+      image_ref: `ghcr.io/demo@sha256:${"a".repeat(64)}`,
+      logical_image_ref: `ghcr.io/demo@sha256:${"b".repeat(64)}`,
+      platform: "linux/amd64",
+      idempotency_key: "c".repeat(64),
+      predicate,
+    });
+    const results = await Promise.all(
+      Array.from({ length: 2 }, () =>
+        ingestSbom(
+          env.DB,
+          TenantIdSchema.parse("tenant"),
+          input,
+          "d".repeat(64),
+          parsePredicate(predicate),
+        ),
+      ),
+    );
+
+    expect(results.map((result) => result.kind).sort()).toEqual(["created", "retry"]);
+  });
+
+  it("reclaims a stale running backfill", async () => {
+    await env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,backfill_attempted_at,created_at) VALUES ('stale','tenant','image','logical','linux/amd64','digest','running',0,0)",
+    ).run();
+    respond({
+      method: "POST",
+      url: "https://osv.test/v1/querybatch",
+      status: 200,
+      body: { results: [] },
+    });
+
+    await backfillSbom({
+      database: env.DB,
+      sbomId: "stale",
+      osvBaseUrl: "https://osv.test",
+      now: 1_300_000,
+    });
+
+    expect(
+      await env.DB.prepare("SELECT backfill_status FROM sboms WHERE id='stale'").first(
+        "backfill_status",
+      ),
+    ).toBe("complete");
+  });
 });

@@ -20,33 +20,34 @@ export async function ingestSbom(
   predicateSha256: string,
   components: readonly Component[],
 ): Promise<IngestResult> {
-  const existing = await database
-    .prepare(
-      "SELECT id, predicate_sha256 FROM sboms WHERE org_id = ? AND image_ref = ? AND platform = ?",
-    )
-    .bind(tenantId, input.image_ref, input.platform)
-    .first<{ readonly id: string; readonly predicate_sha256: string }>();
-  if (existing)
-    return existing.predicate_sha256 === predicateSha256
-      ? { kind: "retry", sbomId: SbomIdSchema.parse(existing.id) }
-      : { kind: "conflict" };
   const sbomId = SbomIdSchema.parse(crypto.randomUUID());
   const now = Date.now();
-  const statements: D1PreparedStatement[] = [
-    database
+  const inserted = await database
+    .prepare(
+      "INSERT INTO sboms (id, org_id, image_ref, logical_image_ref, platform, predicate_sha256, backfill_status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?) ON CONFLICT(org_id, image_ref, platform) DO NOTHING",
+    )
+    .bind(
+      sbomId,
+      tenantId,
+      input.image_ref,
+      input.logical_image_ref,
+      input.platform,
+      predicateSha256,
+      now,
+    )
+    .run();
+  if (inserted.meta.changes === 0) {
+    const existing = await database
       .prepare(
-        "INSERT INTO sboms (id, org_id, image_ref, logical_image_ref, platform, predicate_sha256, backfill_status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+        "SELECT id, predicate_sha256 FROM sboms WHERE org_id = ? AND image_ref = ? AND platform = ?",
       )
-      .bind(
-        sbomId,
-        tenantId,
-        input.image_ref,
-        input.logical_image_ref,
-        input.platform,
-        predicateSha256,
-        now,
-      ),
-  ];
+      .bind(tenantId, input.image_ref, input.platform)
+      .first<{ readonly id: string; readonly predicate_sha256: string }>();
+    return existing?.predicate_sha256 === predicateSha256
+      ? { kind: "retry", sbomId: SbomIdSchema.parse(existing.id) }
+      : { kind: "conflict" };
+  }
+  const statements: D1PreparedStatement[] = [];
   for (const component of components) {
     statements.push(
       database
