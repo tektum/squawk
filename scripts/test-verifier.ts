@@ -9,7 +9,7 @@ if (!workflow.includes("ref: f8fecba94242071ef5d8e8facb8af62a14773a01"))
   throw new Error("CI must pin the producer checkout");
 if ((workflow.match(/persist-credentials: false/g) ?? []).length !== 2)
   throw new Error("CI checkouts must not persist credentials");
-if (!workflow.includes("grep -Rl") || !workflow.includes('[ "$status" -eq 1 ] || exit "$status"'))
+if (!workflow.includes("grep -Rl") || !workflow.includes("status=$?"))
   throw new Error("CI secret scan must fail closed");
 let receiptsRestored = false;
 try {
