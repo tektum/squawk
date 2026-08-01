@@ -114,6 +114,9 @@ function writeReceipt(name: string): void {
 
 mkdirSync("evidence", { recursive: true });
 if (mode === "p0") {
+  scopeScan();
+  if (Object.values(checks).some((passed) => !passed))
+    throw new Error(`verification failed: ${JSON.stringify(checks)}`);
   execute("check", "bun", ["run", "check"]);
   execute("acceptance", "bunx", [
     "vitest",

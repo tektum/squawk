@@ -16,10 +16,9 @@ try {
   if (verify("security").status === 0) throw new Error("security accepted a PAT");
   rmSync("src/oracle-pat.ts");
   appendFileSync("src/domain.ts", "\n");
-  if (verify("scope").status === 0) throw new Error("scope accepted a stale receipt");
+  if (verify("p0").status === 0) throw new Error("p0 accepted source drift");
   writeFileSync("src/domain.ts", original);
-  if (verify("scope").status === 0)
-    throw new Error("scope accepted receipts invalidated by source drift");
+  if (verify("p0").status !== 0) throw new Error("p0 rejected restored approved source");
 } finally {
   rmSync("oracle-unknown.txt", { force: true });
   rmSync("src/oracle-pat.ts", { force: true });
