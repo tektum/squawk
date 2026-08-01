@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { SubrequestBudget } from "./budget";
 import { compareVersion } from "./osv/comparator";
 
+export const backfillLeaseMilliseconds = 20 * 60_000;
+
 const componentSchema = z.object({
   id: z.number(),
   package_name: z.string(),
@@ -51,9 +53,9 @@ export async function backfillSbom(options: BackfillOptions): Promise<void> {
   const now = options.now ?? Date.now();
   const claim = await options.database
     .prepare(
-      "UPDATE sboms SET backfill_status='running',backfill_attempted_at=?,backfill_error=NULL WHERE id=? AND retired_at IS NULL AND backfill_status IN ('pending','failed')",
+      "UPDATE sboms SET backfill_status='running',backfill_attempted_at=?,backfill_error=NULL WHERE id=? AND retired_at IS NULL AND (backfill_status IN ('pending','failed') OR (backfill_status='running' AND COALESCE(backfill_attempted_at,0)<?))",
     )
-    .bind(now, options.sbomId)
+    .bind(now, options.sbomId, now - backfillLeaseMilliseconds)
     .run();
   if (claim.meta.changes === 0) return;
   try {
@@ -119,7 +121,7 @@ export async function backfillSbom(options: BackfillOptions): Promise<void> {
         } else if (comparison.kind === "unsupported" || comparison.kind === "error") {
           await options.database
             .prepare(
-              "INSERT INTO matching_errors (component_id,vuln_id,reason,created_at) VALUES (?,?,?,?)",
+              "INSERT INTO matching_errors (component_id,vuln_id,reason,created_at) VALUES (?,?,?,?) ON CONFLICT(component_id,vuln_id) DO UPDATE SET reason=excluded.reason,created_at=excluded.created_at",
             )
             .bind(component.id, vulnerability.id, comparison.reason, now)
             .run();

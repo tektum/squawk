@@ -133,7 +133,7 @@ export async function syncEcosystem(options: SyncOptions): Promise<number> {
           statements.push(
             options.database
               .prepare(
-                "INSERT INTO matching_errors (component_id,vuln_id,reason,created_at) VALUES (?,?,?,?)",
+                "INSERT INTO matching_errors (component_id,vuln_id,reason,created_at) VALUES (?,?,?,?) ON CONFLICT(component_id,vuln_id) DO UPDATE SET reason=excluded.reason,created_at=excluded.created_at",
               )
               .bind(component.id, advisory.id, comparison.reason, options.now ?? Date.now()),
           );
