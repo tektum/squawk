@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
 
-const actionPath = `${process.env.VERITY_DIR ?? "../verity-images-squawk"}/.github/actions/publish-image/action.yaml`;
+const actionPath = "../verity-images-squawk/.github/actions/publish-image/action.yaml";
 const action = readFileSync(actionPath, "utf8");
 const section = action.match(
   / {4}- name: Submit verified platform predicates to Squawk[\s\S]*?\n {4}- name:/,
