@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.tmp/
+.wrangler/
+.omo/
+SPEC.md
+src/generated/
+worker-configuration.d.ts
+.terraform/
+.dev.vars
+*.tfstate
+*.tfstate.*
