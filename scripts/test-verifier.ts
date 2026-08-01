@@ -2,14 +2,7 @@ import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const verify = (mode: string) =>
-  spawnSync(
-    "bun",
-    [
-      "scripts/verify.ts",
-      mode,
-    ],
-    { encoding: "utf8" },
-  );
+  spawnSync("bun", ["scripts/verify.ts", mode], { encoding: "utf8" });
 const original = readFileSync("src/domain.ts");
 let receiptsRestored = false;
 try {
