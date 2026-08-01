@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { backfillSbom } from "./backfill";
+import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
 import { SubrequestBudget } from "./budget";
 import { dispatchPending } from "./dispatch";
 import { syncEcosystem } from "./sync";
@@ -12,8 +12,10 @@ type ScheduledEnv = Parameters<typeof dispatchPending>[0] & {
 export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise<void> {
   const budget = new SubrequestBudget(45);
   const backfills = await env.DB.prepare(
-    "SELECT id FROM sboms WHERE retired_at IS NULL AND backfill_status IN ('pending','failed') ORDER BY COALESCE(backfill_attempted_at,0),created_at LIMIT 10",
-  ).all<{ readonly id: string }>();
+    "SELECT id FROM sboms WHERE retired_at IS NULL AND (backfill_status IN ('pending','failed') OR (backfill_status='running' AND COALESCE(backfill_attempted_at,0)<?)) ORDER BY COALESCE(backfill_attempted_at,0),created_at LIMIT 10",
+  )
+    .bind(now - backfillLeaseMilliseconds)
+    .all<{ readonly id: string }>();
   for (const { id } of backfills.results) {
     if (budget.remaining <= 3) break;
     try {
@@ -26,6 +28,7 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
       });
     } catch (error) {
       if (!(error instanceof Error)) throw error;
+      console.error("Scheduled backfill failed", { sbomId: id, error });
     }
   }
   const cache = await env.DB.prepare(
@@ -83,6 +86,7 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
           });
         } catch (error) {
           if (!(error instanceof Error)) throw error;
+          console.error("Scheduled OSV sync failed", { ecosystem, error });
         }
       }
     }

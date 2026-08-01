@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { exportPKCS8, generateKeyPair } from "jose";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchPending } from "../../src/dispatch";
 import { runScheduled } from "../../src/scheduled";
 import { respond } from "../http";
@@ -107,6 +107,7 @@ describe("durable multi-platform dispatch", () => {
   });
 
   it("isolates a failing ecosystem and advances a peer fairly through runScheduled", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await env.DB.batch([
       env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 1000)"),
       env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('PyPI', 1000)"),
@@ -169,5 +170,10 @@ describe("durable multi-platform dispatch", () => {
         "last_synced_at",
       ),
     ).resolves.toBe("2026-01-01T00:00:00Z");
+    expect(error).toHaveBeenCalledWith(
+      "Scheduled OSV sync failed",
+      expect.objectContaining({ ecosystem: "npm" }),
+    );
+    error.mockRestore();
   });
 });
