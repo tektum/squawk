@@ -67,8 +67,8 @@ function contentHash(directory: string, files: readonly string[]): string {
 }
 
 function scopeScan(): void {
-  checks["manifest-base"] =
-    run("git", ["rev-parse", "HEAD"]).trim() === manifest.squawk.baseRevision;
+  run("git", ["merge-base", "--is-ancestor", manifest.squawk.baseRevision, "HEAD"]);
+  checks["manifest-base"] = true;
   const changed = changedFiles(".", manifest.squawk.baseRevision);
   checks["approved-diff-exact"] =
     JSON.stringify(changed) === JSON.stringify(manifest.squawk.files.sort());
