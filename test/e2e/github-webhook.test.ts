@@ -1,7 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
-import { statementSchema } from "../../src/webhook-contract";
+import { statementSchema, webhookSchema } from "../../src/webhook-contract";
 import {
   githubWebhookFixture,
   INSTALLATION_ID,
@@ -25,6 +25,30 @@ describe("GitHub deployment webhook", () => {
         "refs/heads/main",
       )
       .run();
+  });
+
+  it("accepts the stable version 1 deployment payload", () => {
+    expect(
+      webhookSchema.safeParse({
+        action: "created",
+        deployment: {
+          id: 1,
+          ref: "refs/heads/main",
+          sha: "1".repeat(40),
+          task: "squawk-sbom",
+          payload: {
+            schema_version: 1,
+            platform: "linux/amd64",
+            image_ref: `ghcr.io/owner/demo@sha256:${"a".repeat(64)}`,
+            logical_image_ref: `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+            subject_digest: `sha256:${"a".repeat(64)}`,
+          },
+        },
+        installation: { id: 1 },
+        repository: { id: 1, full_name: "owner/repo" },
+        sender: { id: 1, login: "github-actions[bot]" },
+      }).success,
+    ).toBe(true);
   });
 
   it("rejects an SPDX predicate labeled as CycloneDX at the attestation boundary", () => {
