@@ -97,6 +97,6 @@
       "scripts/test_notify_squawk.sh",
       "scripts/test_workflow_policy.py"
     ],
-    "contentHash": "3e9d4b747a5105f222bf44aabb7751fd2b8a712c2c7fffc656b87612287aab14"
+    "contentHash": "a7d695caac818427ef8260329170ab4d8cc9416fdea5695ea82bd95a552ec9e4"
   }
 }
