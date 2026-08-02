@@ -78,7 +78,7 @@
       "workers.ts",
       "wrangler.jsonc"
     ],
-    "contentHash": "5988ff8119775ec97dd4f792d54bcc0d2c92a1af1fad6a15358e80c2cff3af64"
+    "contentHash": "143813988cdfd8f5f959b653ffb7e81770efa97298bd7cf29e1e15050d9e7dff"
   },
   "verity": {
     "baseRevision": "3163fae8bd874840cab5f6ad668bc92db3a659c7",
