@@ -1,6 +1,6 @@
 # Squawk
 
-Squawk is a Cloudflare Worker that receives verified SBOM predicates, matches
+Squawk is a Cloudflare Worker that receives GitHub-attested SBOM predicates, matches
 components against OSV advisories, stores findings in D1, and exposes
 authenticated findings and VEX workflows.
 
@@ -9,8 +9,14 @@ authenticated findings and VEX workflows.
 The Hono Worker validates inbound requests with Zod, uses D1 for tenant,
 SBOM, finding, and delivery state, and calls a small Go/WASM matcher for
 ecosystem-aware version comparison. OpenTofu provisions the Cloudflare
-resources; the sibling `../verity-images-squawk` repository produces verified
-image predicates and exercises the cross-repository flow.
+resources; the sibling `../verity-images-squawk` repository creates one GitHub
+CycloneDX attestation and deployment per platform. The Worker verifies the
+deployment webhook HMAC over untouched bytes, the claim-bound GitHub OIDC token,
+and the fetched repository attestation before using the existing ingest path.
+
+Squawk intentionally does not verify Sigstore signatures locally. The GitHub OIDC
+audience binds the exact DSSE statement hash and immutable image identities; the
+repository-scoped App token fetches that statement from GitHub's attestation API.
 
 ## Prerequisites and setup
 
@@ -49,8 +55,8 @@ golangci-lint v2, govulncheck, and module verification.
 ## Deployment and secrets
 
 `Deploy Squawk` provisions D1, applies D1 migrations, then deploys dark
-(`DISPATCH_ENABLED=false`) before injecting GitHub App secrets through
-`wrangler secret put`. Store Cloudflare, Descope, and GitHub App values in
+(`DISPATCH_ENABLED=false`) before injecting GitHub App and `GH_WEBHOOK_SECRET`
+through `wrangler secret put`. Store Cloudflare, human Descope, and GitHub App values in
 GitHub secrets or Cloudflare secrets only; never put them in `devbox.json`,
 OpenTofu variables, or repository files. See [the rollout runbook](docs/runbook.md)
 for the ordered deployment and rollback procedure.
