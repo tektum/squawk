@@ -1,15 +1,37 @@
 # Squawk rollout
 
-1. Build the Worker bundle.
-2. Apply only `cloudflare_d1_database.squawk` with nonsecret OpenTofu variables. `DESCOPE_MANAGEMENT_KEY` stays in the inherited CI environment and is never a Tofu variable, output, or state value.
-3. Apply migrations to the selected D1 database.
-4. Apply the remaining infrastructure dark with `DISPATCH_ENABLED=false`; this uploads the Worker, deploys it, creates the four-hour cron, and reconciles Descope.
-5. Inject `GH_APP_ID`, `GH_APP_INSTALLATION_ID`, and `GH_APP_PRIVATE_KEY` with `wrangler secret put` through stdin.
-6. Run `/health`, authenticated SBOM submission, findings query, and the verity-images receiver smoke flow.
-7. Enable dispatch only after the cross-repository smoke receipt passes.
+1. Configure the existing GitHub App webhook URL as
+   `https://WORKER/webhooks/github`, content type `application/json`, with the
+   `deployment` event enabled. Grant Deployments read for delivery subscription,
+   Attestations read for ingest, and retain the existing Actions permission used
+   by outbound finding dispatch.
+2. Add the same random webhook value to the App and the deployment environment as
+   `GH_WEBHOOK_SECRET`. Keep `GH_APP_ID`, `GH_APP_INSTALLATION_ID`, and
+   `GH_APP_PRIVATE_KEY` in Worker/GitHub secrets only.
+3. Build the Worker, apply `cloudflare_d1_database.squawk`, apply all D1
+   migrations, then apply the remaining infrastructure dark with
+   `DISPATCH_ENABLED=false`.
+4. Seed the immutable source mapping until a management UI exists:
 
-The deployed Worker compatibility date is the plan's `2026-08-01`. The pinned local Workers-pool runtime currently falls back to `2025-12-13` during tests; this is a local runtime limitation only and does not alter the deployed compatibility date.
+```sh
+bun scripts/seed-github-source.ts squawk-staging \
+  INSTALLATION_ID REPOSITORY_ID DESCOPE_TENANT_ID \
+  .github/workflows/build.yaml refs/heads/main
+```
 
-Rollback: set `DISPATCH_ENABLED=false`, deploy Squawk, then run `scripts/rollback-monitor.sh ../verity-images-squawk` to restore the pinned baseline schedule and scanner response path.
+5. Publish a known image from protected `main`. Confirm one accepted
+   `github_deliveries` row and one complete `sboms` row per platform. Confirm a
+   replay returns success without adding rows.
+6. Exercise human findings, VEX, and SBOM retirement with a hosted Descope session.
+7. Enable outbound finding dispatch only after the cross-repository receipt passes.
 
-D1 operations: inspect failed backfills with `SELECT * FROM sboms WHERE backfill_status='failed'`; matching failures with `SELECT * FROM matching_errors ORDER BY created_at DESC`; delivery retries with `SELECT * FROM dispatch_deliveries WHERE status IN ('pending','failed')`.
+GitHub 5xx/rate-limit failures return a retryable webhook response and create no
+delivery receipt. Inspect inbound state with
+`SELECT * FROM github_deliveries ORDER BY created_at DESC`; failed backfills with
+`SELECT * FROM sboms WHERE backfill_status='failed'`; matcher failures with
+`SELECT * FROM matching_errors ORDER BY created_at DESC`; and outbound retries
+with `SELECT * FROM dispatch_deliveries WHERE status IN ('pending','failed')`.
+
+Rollback: set `DISPATCH_ENABLED=false`, disable only the App's `deployment`
+subscription if inbound processing must stop, and preserve D1 for investigation.
+No static producer credential exists to revoke.
