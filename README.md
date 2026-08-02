@@ -11,12 +11,12 @@ SBOM, finding, and delivery state, and calls a small Go/WASM matcher for
 ecosystem-aware version comparison. OpenTofu provisions the Cloudflare
 resources; the sibling `../verity-images-squawk` repository creates one GitHub
 CycloneDX attestation and deployment per platform. The Worker verifies the
-deployment webhook HMAC over untouched bytes, the claim-bound GitHub OIDC token,
-and the fetched repository attestation before using the existing ingest path.
+deployment webhook HMAC over untouched bytes, then fetches the repository
+attestation by immutable subject digest before using the existing ingest path.
 
-Squawk intentionally does not verify Sigstore signatures locally. The GitHub OIDC
-audience binds the exact DSSE statement hash and immutable image identities; the
-repository-scoped App token fetches that statement from GitHub's attestation API.
+Squawk intentionally does not verify Sigstore signatures locally. The GitHub App
+webhook and authenticated repository attestation API are the current trust
+boundary; independent Sigstore verification is future hardening.
 
 ## Prerequisites and setup
 

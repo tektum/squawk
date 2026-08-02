@@ -15,8 +15,7 @@
 
 ```sh
 bun scripts/seed-github-source.ts squawk-staging \
-  INSTALLATION_ID REPOSITORY_ID DESCOPE_TENANT_ID \
-  .github/workflows/build.yaml refs/heads/main
+  INSTALLATION_ID REPOSITORY_ID DESCOPE_TENANT_ID
 ```
 
 5. Publish a known image from protected `main`. Confirm one accepted
