@@ -10,17 +10,13 @@ const desired = {
   tenant: { id: "tenant-1", name: "Squawk tenant" },
   application: {
     name: "Squawk tenant-1",
-    description: "GitHub OIDC inbound application",
-    permissionsScopes: [{ name: "sbom.write", description: "Submit signed SBOM predicates" }],
-    issuerTrust: {
-      issuer: "https://token.actions.githubusercontent.com",
-      subject: "repo:tektum/verity-images:*",
-    },
-    machineGrant: {
-      grantType: "urn:ietf:params:oauth:grant-type:jwt-bearer" as const,
-      permissions: ["sbom.write"],
-    },
-    humanGrant: { permissions: ["findings.read", "vex.write"] },
+    description: "Human data management application",
+    permissionsScopes: [
+      { name: "sbom.manage", description: "Manage stored SBOM data" },
+      { name: "findings.read", description: "Read findings" },
+      { name: "vex.write", description: "Write VEX statements" },
+    ],
+    humanGrant: { permissions: ["sbom.manage", "findings.read", "vex.write"] },
   },
 };
 
@@ -58,13 +54,7 @@ describe("Descope management provisioning", () => {
       tenantId: "tenant-1",
       inboundAppId: "app-1",
       clientId: "client-1",
-      changes: [
-        "tenant:create",
-        "application:create",
-        "issuer:create",
-        "machine-grant:create",
-        "human-grant:create",
-      ],
+      changes: ["tenant:create", "application:create", "human-grant:create"],
     });
   });
 
@@ -103,13 +93,7 @@ describe("Descope management provisioning", () => {
       ),
     );
     await expect(provisionDescope(desired)).resolves.toMatchObject({
-      changes: [
-        "tenant:update",
-        "application:update",
-        "issuer:update",
-        "machine-grant:update",
-        "human-grant:update",
-      ],
+      changes: ["tenant:update", "application:update", "human-grant:update"],
     });
 
     server.use(
@@ -121,13 +105,9 @@ describe("Descope management provisioning", () => {
           apps: [{ id: "app-1", clientId: "client-1", ...desired.application }],
         }),
       ),
-      http.get("https://api.descope.test/v1/mgmt/thirdparty/app/:path", ({ request }) =>
+      http.get("https://api.descope.test/v1/mgmt/thirdparty/app/:path", () =>
         HttpResponse.json({
-          value: new URL(request.url).pathname.endsWith("issuer-trust")
-            ? { appId: "app-1", ...desired.application.issuerTrust }
-            : new URL(request.url).pathname.endsWith("machine-grant")
-              ? { appId: "app-1", ...desired.application.machineGrant }
-              : { tenantId: "tenant-1", ...desired.application.humanGrant },
+          value: { tenantId: "tenant-1", ...desired.application.humanGrant },
         }),
       ),
     );

@@ -15,11 +15,6 @@ const inputSchema = z.object({
     name: z.string().min(1),
     description: z.string().optional(),
     permissionsScopes: z.array(scopeSchema),
-    issuerTrust: z.object({ issuer: z.string().url(), subject: z.string().min(1) }),
-    machineGrant: z.object({
-      grantType: z.literal("urn:ietf:params:oauth:grant-type:jwt-bearer"),
-      permissions: z.array(z.string().min(1)).min(1),
-    }),
     humanGrant: z.object({ permissions: z.array(z.string().min(1)).min(1) }),
   }),
 });
@@ -39,10 +34,6 @@ type Change =
   | "tenant:update"
   | "application:create"
   | "application:update"
-  | "issuer:create"
-  | "issuer:update"
-  | "machine-grant:create"
-  | "machine-grant:update"
   | "human-grant:create"
   | "human-grant:update";
 
@@ -153,24 +144,6 @@ export async function provisionDescope(rawInput: ProvisionInput): Promise<{
   await reconcile(
     input.baseUrl,
     authorization,
-    "issuer-trust",
-    { appId: application.id, ...input.application.issuerTrust },
-    changes,
-    "issuer:create",
-    "issuer:update",
-  );
-  await reconcile(
-    input.baseUrl,
-    authorization,
-    "machine-grant",
-    { appId: application.id, ...input.application.machineGrant },
-    changes,
-    "machine-grant:create",
-    "machine-grant:update",
-  );
-  await reconcile(
-    input.baseUrl,
-    authorization,
     "human-grant",
     { tenantId: input.tenant.id, ...input.application.humanGrant },
     changes,
@@ -202,19 +175,11 @@ if (import.meta.main) {
       name: `Squawk ${environment.DESCOPE_TENANT_ID}`,
       description: `OAuth client for ${environment.DESCOPE_AUDIENCE}`,
       permissionsScopes: [
-        { name: "sbom.write", description: "Submit signed SBOM predicates" },
+        { name: "sbom.manage", description: "Manage stored SBOM data" },
         { name: "findings.read", description: "Read tenant findings" },
         { name: "vex.write", description: "Write human VEX statements" },
       ],
-      issuerTrust: {
-        issuer: "https://token.actions.githubusercontent.com",
-        subject: "repo:tektum/verity-images:*",
-      },
-      machineGrant: {
-        grantType: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        permissions: ["sbom.write"],
-      },
-      humanGrant: { permissions: ["findings.read", "vex.write"] },
+      humanGrant: { permissions: ["sbom.manage", "findings.read", "vex.write"] },
     },
   });
   console.log(JSON.stringify(result));
