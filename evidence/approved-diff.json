@@ -6,6 +6,7 @@
       ".github/workflows/deploy.yml",
       ".gitignore",
       "README.md",
+      "SPEC.md",
       "biome.jsonc",
       "bun.lock",
       "devbox.json",
@@ -79,7 +80,7 @@
       "workers.ts",
       "wrangler.jsonc"
     ],
-    "contentHash": "e2a053a4c36827ea0775a3d9a17a30d04f1eabf8b89c034de2c4f4889c757a84"
+    "contentHash": "dcd55eba5ee7317fb4d21981004ccc8252f29157214d91f3e356b3f81e644fe8"
   },
   "verity": {
     "baseRevision": "3163fae8bd874840cab5f6ad668bc92db3a659c7",
