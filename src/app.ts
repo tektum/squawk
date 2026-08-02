@@ -2,10 +2,9 @@ import { Hono } from "hono";
 import { errors as joseErrors } from "jose";
 import { z } from "zod";
 import { authenticate, AuthenticationError, AuthorizationError, requireCapability } from "./auth";
-import { backfillSbom } from "./backfill";
 import { SbomIdSchema, TenantIdSchema, vexInputSchema, type Principal } from "./domain";
-import { appendVex, ingestSbom, listFindings, retireSbom } from "./repository";
-import { parsePredicate, sbomInputSchema } from "./sbom";
+import { appendVex, listFindings, retireSbom } from "./repository";
+import { handleGithubWebhook, WebhookError } from "./webhook";
 
 export type WorkerBindings = {
   readonly DB: D1Database;
@@ -13,6 +12,11 @@ export type WorkerBindings = {
   readonly DESCOPE_AUDIENCE: string;
   readonly DESCOPE_DISCOVERY_URL: string;
   readonly DESCOPE_ISSUER: string;
+  readonly GH_APP_ID: string;
+  readonly GH_APP_PRIVATE_KEY: string;
+  readonly GH_OIDC_ISSUER: string;
+  readonly GH_OIDC_JWKS_URL: string;
+  readonly GH_WEBHOOK_SECRET: string;
   readonly OSV_BASE_URL: string;
   readonly EXECUTION_CONTEXT: ExecutionContext;
 };
@@ -23,6 +27,8 @@ export const app = new Hono<{
 }>();
 
 app.get("/health", (context) => context.json({ status: "ok" }));
+
+app.post("/webhooks/github", (context) => handleGithubWebhook(context.req.raw, context.env));
 
 app.use("/v1/*", async (context, next) => {
   const principal = await authenticate(context.req.header("Authorization"), {
@@ -40,52 +46,10 @@ function principalForOrg(principal: Principal, orgId: string): Principal {
   return principal;
 }
 
-async function predicateHash(predicate: unknown): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(JSON.stringify(predicate)),
-  );
-  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join(
-    "",
-  );
-}
-
-app.post("/v1/sboms", async (context) => {
-  const principal = context.get("principal");
-  requireCapability(principal, "sbom.write");
-  const input = sbomInputSchema.parse(await context.req.json());
-  const components = parsePredicate(input.predicate);
-  const hash = await predicateHash(input.predicate);
-  if (input.idempotency_key !== hash)
-    throw new z.ZodError([
-      { code: "custom", path: ["idempotency_key"], message: "must equal predicate SHA-256" },
-    ]);
-  const result = await ingestSbom(
-    context.env.DB,
-    principal.tenantId,
-    input,
-    input.idempotency_key,
-    components,
-  );
-  if (result.kind === "conflict")
-    return context.json({ error: "conflicting platform submission" }, 409);
-  if (result.kind === "created")
-    context.env.EXECUTION_CONTEXT.waitUntil(
-      backfillSbom({
-        database: context.env.DB,
-        sbomId: result.sbomId,
-        osvBaseUrl: context.env.OSV_BASE_URL,
-      }),
-    );
-  return context.json(
-    { sbom_id: result.sbomId, status: result.kind === "created" ? "pending" : "complete" },
-    result.kind === "created" ? 202 : 200,
-  );
-});
-
 app.delete("/v1/sboms/:id", async (context) => {
   const principal = context.get("principal");
-  requireCapability(principal, "sbom.write");
+  requireCapability(principal, "sbom.manage");
+  if (!principal.userId) throw new AuthorizationError("human identity required");
   const retired = await retireSbom(
     context.env.DB,
     principal.tenantId,
@@ -133,6 +97,7 @@ app.onError((error, context) => {
   if (error instanceof AuthenticationError) return context.json({ error: "unauthorized" }, 401);
   if (error instanceof joseErrors.JOSEError) return context.json({ error: "unauthorized" }, 401);
   if (error instanceof AuthorizationError) return context.json({ error: "forbidden" }, 403);
+  if (error instanceof WebhookError) return context.json({ error: error.message }, error.status);
   if (error instanceof z.ZodError) return context.json({ error: "invalid request" }, 400);
   return context.json({ error: "internal error" }, 500);
 });

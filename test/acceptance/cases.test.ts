@@ -38,7 +38,7 @@ const seedFinding = async (suffix: string, retired = false): Promise<void> => {
 };
 
 const cases: readonly AcceptanceCase[] = [
-  ["R1-1", () => expect(CapabilitySchema.parse("sbom.write")).toBe("sbom.write")],
+  ["R1-1", () => expect(() => CapabilitySchema.parse("sbom.write")).toThrow()],
   ["R1-2", () => expect(() => TenantIdSchema.parse("")).toThrow()],
   [
     "R1-3",

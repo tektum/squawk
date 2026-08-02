@@ -1,7 +1,7 @@
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { http, HttpResponse } from "msw";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { authenticate, AuthorizationError, requireCapability } from "../../src/auth";
+import { authenticate, requireCapability } from "../../src/auth";
 import { server } from "../server";
 
 const issuer = "https://issuer.test";
@@ -41,19 +41,17 @@ describe("JOSE authentication", () => {
       .sign(privateKey);
   }
 
-  it("accepts a machine principal with the SBOM capability", async () => {
-    const principal = await authenticate(
-      `Bearer ${await token({ tenants: ["tenant-1"], permissions: ["sbom.write"] })}`,
-      {
-        issuer,
-        audience,
-        discoveryUrl: `${issuer}/.well-known/openid-configuration`,
-      },
-    );
-
-    expect(principal.userId).toBeUndefined();
-    expect(() => requireCapability(principal, "sbom.write")).not.toThrow();
-    expect(() => requireCapability(principal, "vex.write")).toThrow(AuthorizationError);
+  it("rejects the removed machine SBOM capability", async () => {
+    await expect(
+      authenticate(
+        `Bearer ${await token({ tenants: ["tenant-1"], permissions: ["sbom.write"] })}`,
+        {
+          issuer,
+          audience,
+          discoveryUrl: `${issuer}/.well-known/openid-configuration`,
+        },
+      ),
+    ).rejects.toThrow();
   });
 
   it("accepts a hosted human with query and VEX capabilities", async () => {

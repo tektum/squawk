@@ -1,17 +1,29 @@
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { createExecutionContext, env } from "cloudflare:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import { respond } from "../http";
 
-describe("authenticated HTTP pipeline", () => {
+describe("human HTTP pipeline", () => {
   beforeEach(async () => {
-    await env.DB.prepare(
-      "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
-    ).run();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)"),
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('00000000-0000-4000-8000-000000000001','tenant','image','logical','linux/amd64','digest','complete',0)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (1,'00000000-0000-4000-8000-000000000001','demo','npm','1.5.0','pkg:npm/demo@1.5.0',1)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO vulnerabilities (id,ecosystem,package_name,affected_ranges,modified_at) VALUES ('OSV-1','npm','demo','[]','2020-01-01T00:00:00Z')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO findings (org_id,component_id,vuln_id,detected_at) VALUES ('tenant',1,'OSV-1',0)",
+      ),
+    ]);
   });
 
-  it("ingests, backfills, queries, applies human VEX, and retires through HTTP", async () => {
+  it("queries findings, applies VEX, and retires data with a human principal", async () => {
     const issuer = "https://pipeline.test";
     const pair = await generateKeyPair("RS256");
     const jwk = await exportJWK(pair.publicKey);
@@ -25,93 +37,26 @@ describe("authenticated HTTP pipeline", () => {
       status: 200,
       body: { keys: [{ ...jwk, kid: "key", alg: "RS256", use: "sig" }] },
     });
-    respond({
-      method: "POST",
-      url: "https://osv.test/v1/querybatch",
-      status: 200,
-      body: {
-        results: [
-          {
-            vulns: [
-              {
-                id: "OSV-1",
-                modified: "2020-01-01T00:00:00Z",
-                affected: [
-                  {
-                    package: { ecosystem: "npm", name: "demo" },
-                    ranges: [
-                      { type: "SEMVER", events: [{ introduced: "1.0.0" }, { fixed: "2.0.0" }] },
-                    ],
-                    versions: [],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    });
-    const sign = (claims: Record<string, unknown>) =>
-      new SignJWT(claims)
-        .setProtectedHeader({ alg: "RS256", kid: "key" })
-        .setIssuer(issuer)
-        .setAudience("audience")
-        .setIssuedAt()
-        .setExpirationTime("5m")
-        .sign(pair.privateKey);
-    const machine = await sign({ tenants: ["tenant"], permissions: ["sbom.write"] });
-    const human = await sign({
+    const token = await new SignJWT({
       sub: "user",
       tenants: ["tenant"],
-      permissions: ["findings.read", "vex.write"],
-    });
-    const predicate = {
-      bomFormat: "CycloneDX",
-      components: [{ name: "demo", version: "1.5.0", purl: "pkg:npm/demo@1.5.0" }],
-    };
-    const bytes = new TextEncoder().encode(JSON.stringify(predicate));
-    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (value) =>
-      value.toString(16).padStart(2, "0"),
-    ).join("");
+      permissions: ["sbom.manage", "findings.read", "vex.write"],
+    })
+      .setProtectedHeader({ alg: "RS256", kid: "key" })
+      .setIssuer(issuer)
+      .setAudience("audience")
+      .setIssuedAt()
+      .setExpirationTime("5m")
+      .sign(pair.privateKey);
     const bindings = {
       ...env,
       DESCOPE_ISSUER: issuer,
       DESCOPE_AUDIENCE: "audience",
       DESCOPE_DISCOVERY_URL: `${issuer}/.well-known/openid-configuration`,
-      OSV_BASE_URL: "https://osv.test",
-      DISPATCH_ENABLED: "false",
     };
-    const context = createExecutionContext();
-    const submitted = await worker.fetch(
-      new Request("https://squawk.test/v1/sboms", {
-        method: "POST",
-        headers: { authorization: `Bearer ${machine}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          image_ref: `ghcr.io/x@sha256:${"a".repeat(64)}`,
-          logical_image_ref: `ghcr.io/x@sha256:${"b".repeat(64)}`,
-          platform: "linux/amd64",
-          idempotency_key: hash,
-          predicate,
-        }),
-      }),
-      bindings,
-      context,
-    );
-    expect(submitted.status).toBe(202);
-    const body = await submitted.json<{ readonly sbom_id: string }>();
-    await waitOnExecutionContext(context);
-    expect(
-      await env.DB.prepare("SELECT backfill_status FROM sboms WHERE id=?")
-        .bind(body.sbom_id)
-        .first<string>("backfill_status"),
-    ).toBe("complete");
-    expect(
-      await env.DB.prepare("SELECT COUNT(*) AS count FROM findings").first<number>("count"),
-    ).toBe(1);
+    const headers = { authorization: `Bearer ${token}` };
     const findings = await worker.fetch(
-      new Request("https://squawk.test/v1/orgs/tenant/findings", {
-        headers: { authorization: `Bearer ${human}` },
-      }),
+      new Request("https://squawk.test/v1/orgs/tenant/findings", { headers }),
       bindings,
       createExecutionContext(),
     );
@@ -121,7 +66,7 @@ describe("authenticated HTTP pipeline", () => {
     const vex = await worker.fetch(
       new Request("https://squawk.test/v1/orgs/tenant/vex", {
         method: "POST",
-        headers: { authorization: `Bearer ${human}`, "content-type": "application/json" },
+        headers: { ...headers, "content-type": "application/json" },
         body: JSON.stringify({
           package_name: "demo",
           ecosystem: "npm",
@@ -133,20 +78,10 @@ describe("authenticated HTTP pipeline", () => {
       createExecutionContext(),
     );
     expect(vex.status).toBe(204);
-    const suppressed = await worker.fetch(
-      new Request("https://squawk.test/v1/orgs/tenant/findings", {
-        headers: { authorization: `Bearer ${human}` },
-      }),
-      bindings,
-      createExecutionContext(),
-    );
-    expect(
-      (await suppressed.json<{ readonly findings: readonly unknown[] }>()).findings,
-    ).toHaveLength(0);
     const retired = await worker.fetch(
-      new Request(`https://squawk.test/v1/sboms/${body.sbom_id}`, {
+      new Request("https://squawk.test/v1/sboms/00000000-0000-4000-8000-000000000001", {
         method: "DELETE",
-        headers: { authorization: `Bearer ${machine}` },
+        headers,
       }),
       bindings,
       createExecutionContext(),

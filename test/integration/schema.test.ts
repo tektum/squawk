@@ -17,6 +17,8 @@ describe("D1 migration contract", () => {
       "osv_ecosystems",
       "matching_errors",
       "dispatch_deliveries",
+      "github_sources",
+      "github_deliveries",
     ]) {
       expect(tables.results.some((table) => table.name === name)).toBe(true);
     }
