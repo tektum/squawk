@@ -29,6 +29,7 @@
       "migrations/0001_initial.sql",
       "migrations/0002_matching_errors_identity.sql",
       "migrations/0003_github_webhooks.sql",
+      "migrations/0004_github_deployment_receipts.sql",
       "package.json",
       "scripts/provision-descope.ts",
       "scripts/seed-github-source.ts",
@@ -78,7 +79,7 @@
       "workers.ts",
       "wrangler.jsonc"
     ],
-    "contentHash": "143813988cdfd8f5f959b653ffb7e81770efa97298bd7cf29e1e15050d9e7dff"
+    "contentHash": "e2a053a4c36827ea0775a3d9a17a30d04f1eabf8b89c034de2c4f4889c757a84"
   },
   "verity": {
     "baseRevision": "3163fae8bd874840cab5f6ad668bc92db3a659c7",
@@ -97,6 +98,6 @@
       "scripts/test_notify_squawk.sh",
       "scripts/test_workflow_policy.py"
     ],
-    "contentHash": "a7d695caac818427ef8260329170ab4d8cc9416fdea5695ea82bd95a552ec9e4"
+    "contentHash": "db479979d0617d578de4cc268700bdab7c4fae64ee7e75e61edbb86494614dca"
   }
 }
