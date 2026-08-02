@@ -80,7 +80,7 @@
       "workers.ts",
       "wrangler.jsonc"
     ],
-    "contentHash": "dcd55eba5ee7317fb4d21981004ccc8252f29157214d91f3e356b3f81e644fe8"
+    "contentHash": "482c76398c018ab422d34c860aac94511200e82318c77b1e82d237ea192ade70"
   },
   "verity": {
     "baseRevision": "3163fae8bd874840cab5f6ad668bc92db3a659c7",
@@ -99,6 +99,6 @@
       "scripts/test_notify_squawk.sh",
       "scripts/test_workflow_policy.py"
     ],
-    "contentHash": "db479979d0617d578de4cc268700bdab7c4fae64ee7e75e61edbb86494614dca"
+    "contentHash": "1d8ca17f53f52ef28ccc4a01e029b726db8613fbc7dbe0439cc8d777b2134aa5"
   }
 }
