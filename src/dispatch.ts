@@ -1,6 +1,6 @@
-import { importPKCS8, SignJWT } from "jose";
 import { z } from "zod";
 import type { SubrequestBudget } from "./budget";
+import { installationToken } from "./github";
 
 type DispatchEnv = {
   readonly DB: D1Database;
@@ -27,35 +27,6 @@ async function sha256(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function installationToken(
-  env: DispatchEnv,
-  now: number,
-  budget?: SubrequestBudget,
-): Promise<string> {
-  const key = await importPKCS8(env.GH_APP_PRIVATE_KEY, "RS256");
-  const jwt = await new SignJWT({})
-    .setProtectedHeader({ alg: "RS256" })
-    .setIssuer(env.GH_APP_ID)
-    .setIssuedAt(Math.floor(now / 1000) - 60)
-    .setExpirationTime(Math.floor(now / 1000) + 540)
-    .sign(key);
-  budget?.take();
-  const response = await fetch(
-    `https://api.github.com/app/installations/${env.GH_APP_INSTALLATION_ID}/access_tokens`,
-    {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${jwt}`,
-        accept: "application/vnd.github+json",
-        "user-agent": "squawk",
-      },
-      signal: AbortSignal.timeout(10_000),
-    },
-  );
-  if (!response.ok) throw new Error(`GitHub installation token failed (${response.status})`);
-  return z.object({ token: z.string().min(1) }).parse(await response.json()).token;
-}
-
 export async function dispatchPending(
   env: DispatchEnv,
   now = Date.now(),
@@ -74,7 +45,12 @@ export async function dispatchPending(
     GROUP BY f.org_id,s.logical_image_ref,c.package_name,c.ecosystem,c.version,f.vuln_id`).all()
   ).results.map((row) => pendingSchema.parse(row));
   if (rows.length === 0) return 0;
-  const token = await installationToken(env, now, budget);
+  const token = await installationToken(
+    env,
+    { installationId: env.GH_APP_INSTALLATION_ID },
+    now,
+    budget,
+  );
   for (const row of rows) {
     const deliveryId = await sha256(
       [
