@@ -84,13 +84,13 @@ function scopeScan(): void {
       manifest.verity.baseRevision === baseline &&
       run("git", ["-C", verityDir, "rev-parse", "HEAD"]).trim() === baseline;
   }
-  checks["rollback-executable"] =
-    existsSync("scripts/rollback-monitor.sh") &&
-    readFileSync("docs/runbook.md", "utf8").includes("rollback-monitor.sh");
+  checks["source-seed-documented"] =
+    existsSync("scripts/seed-github-source.ts") &&
+    readFileSync("docs/runbook.md", "utf8").includes("seed-github-source.ts");
   checks["rollout-dark-first"] =
     readFileSync("wrangler.jsonc", "utf8").includes('"DISPATCH_ENABLED": "false"') &&
-    readFileSync("docs/runbook.md", "utf8").indexOf("Deploy dark") <
-      readFileSync("docs/runbook.md", "utf8").indexOf("Enable dispatch");
+    readFileSync("docs/runbook.md", "utf8").indexOf("DISPATCH_ENABLED=false") <
+      readFileSync("docs/runbook.md", "utf8").indexOf("Enable outbound");
 }
 
 function secretScan(): void {
