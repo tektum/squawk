@@ -5,8 +5,8 @@
       ".github/workflows/ci.yml",
       ".github/workflows/deploy.yml",
       ".gitignore",
+      "AGENTS.md",
       "README.md",
-      "SPEC.md",
       "biome.jsonc",
       "bun.lock",
       "devbox.json",
@@ -78,6 +78,6 @@
       "workers.ts",
       "wrangler.jsonc"
     ],
-    "contentHash": "8af7d4a906d3e01b4cd070dae88db10102df625a419b59d457f3d4fe3964e36c"
+    "contentHash": "a6bfb9e414d57cd525894d2fce243c619d9c8cc2d57cf818ad2fc02b9343ea71"
   }
 }
