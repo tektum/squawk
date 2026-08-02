@@ -17,13 +17,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: tektum/verity-images
-          ref: 9e3128221f0e5c91e41ae794fee49f26aefb91b1
-          path: verity-images-squawk
-          persist-credentials: false
-      - run: mv verity-images-squawk ../verity-images-squawk
       - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
         with:
           devbox-version: "0.17.5"
