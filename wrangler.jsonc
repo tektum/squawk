@@ -18,8 +18,6 @@
     "DESCOPE_AUDIENCE": "https://squawk.invalid/audience",
     "DESCOPE_DISCOVERY_URL": "https://squawk.invalid/.well-known/openid-configuration",
     "DESCOPE_ISSUER": "https://squawk.invalid",
-    "GH_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
-    "GH_OIDC_JWKS_URL": "https://token.actions.githubusercontent.com/.well-known/jwks",
     "OSV_BASE_URL": "https://storage.googleapis.com/osv-vulnerabilities"
   },
   "env": {
