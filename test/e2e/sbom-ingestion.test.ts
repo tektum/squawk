@@ -112,6 +112,30 @@ describe("SBOM ingestion and historical backfill", () => {
     expect(results.map((result) => result.kind).sort()).toEqual(["created", "retry"]);
   });
 
+  it("rolls back the SBOM identity when component persistence fails", async () => {
+    const predicate = {
+      bomFormat: "CycloneDX",
+      components: [{ name: "demo", version: "1", purl: "pkg:npm/demo@1" }],
+    };
+    const input = sbomInputSchema.parse({
+      image_ref: `ghcr.io/demo@sha256:${"a".repeat(64)}`,
+      logical_image_ref: `ghcr.io/demo@sha256:${"b".repeat(64)}`,
+      platform: "linux/amd64",
+      idempotency_key: "c".repeat(64),
+      predicate,
+    });
+    const component = parsePredicate(predicate)[0];
+    if (!component) throw new Error("expected component fixture");
+
+    await expect(
+      ingestSbom(env.DB, TenantIdSchema.parse("tenant"), input, "d".repeat(64), [
+        component,
+        component,
+      ]),
+    ).rejects.toThrow();
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(0);
+  });
+
   it("reclaims a stale running backfill", async () => {
     await env.DB.prepare(
       "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,backfill_attempted_at,created_at) VALUES ('stale','tenant','image','logical','linux/amd64','digest','running',0,0)",

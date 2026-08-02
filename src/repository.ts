@@ -20,34 +20,36 @@ export async function ingestSbom(
   predicateSha256: string,
   components: readonly Component[],
 ): Promise<IngestResult> {
-  const sbomId = SbomIdSchema.parse(crypto.randomUUID());
-  const now = Date.now();
-  const inserted = await database
-    .prepare(
-      "INSERT INTO sboms (id, org_id, image_ref, logical_image_ref, platform, predicate_sha256, backfill_status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?) ON CONFLICT(org_id, image_ref, platform) DO NOTHING",
-    )
-    .bind(
-      sbomId,
-      tenantId,
-      input.image_ref,
-      input.logical_image_ref,
-      input.platform,
-      predicateSha256,
-      now,
-    )
-    .run();
-  if (inserted.meta.changes === 0) {
+  const loadExisting = async (): Promise<IngestResult | null> => {
     const existing = await database
       .prepare(
         "SELECT id, predicate_sha256 FROM sboms WHERE org_id = ? AND image_ref = ? AND platform = ?",
       )
       .bind(tenantId, input.image_ref, input.platform)
       .first<{ readonly id: string; readonly predicate_sha256: string }>();
-    return existing?.predicate_sha256 === predicateSha256
+    if (!existing) return null;
+    return existing.predicate_sha256 === predicateSha256
       ? { kind: "retry", sbomId: SbomIdSchema.parse(existing.id) }
       : { kind: "conflict" };
-  }
-  const statements: D1PreparedStatement[] = [];
+  };
+  const current = await loadExisting();
+  if (current) return current;
+  const sbomId = SbomIdSchema.parse(crypto.randomUUID());
+  const statements: D1PreparedStatement[] = [
+    database
+      .prepare(
+        "INSERT INTO sboms (id, org_id, image_ref, logical_image_ref, platform, predicate_sha256, backfill_status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+      )
+      .bind(
+        sbomId,
+        tenantId,
+        input.image_ref,
+        input.logical_image_ref,
+        input.platform,
+        predicateSha256,
+        Date.now(),
+      ),
+  ];
   for (const component of components) {
     statements.push(
       database
@@ -64,7 +66,13 @@ export async function ingestSbom(
         ),
     );
   }
-  await database.batch(statements);
+  try {
+    await database.batch(statements);
+  } catch (error) {
+    const raced = await loadExisting();
+    if (raced) return raced;
+    throw error;
+  }
   return { kind: "created", sbomId };
 }
 
