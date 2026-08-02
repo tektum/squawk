@@ -1,6 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
+import { statementSchema } from "../../src/webhook-contract";
 import {
   githubWebhookFixture,
   INSTALLATION_ID,
@@ -24,6 +25,17 @@ describe("GitHub deployment webhook", () => {
         "refs/heads/main",
       )
       .run();
+  });
+
+  it("rejects an SPDX predicate labeled as CycloneDX at the attestation boundary", () => {
+    expect(
+      statementSchema.safeParse({
+        _type: "https://in-toto.io/Statement/v1",
+        subject: [{ name: "ghcr.io/owner/demo", digest: { sha256: "a".repeat(64) } }],
+        predicateType: "https://cyclonedx.org/bom",
+        predicate: { spdxVersion: "SPDX-2.3", packages: [] },
+      }).success,
+    ).toBe(false);
   });
 
   it("ingests the repository attestation when the deployment wire contract is valid", async () => {
@@ -85,6 +97,7 @@ describe("GitHub deployment webhook", () => {
     "task",
     "repository",
     "installation",
+    "predicate",
     "subject",
   ] satisfies readonly FailureCase[])("fails closed for a wrong %s", async (failure) => {
     const fixture = await githubWebhookFixture(failure);

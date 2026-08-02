@@ -45,7 +45,8 @@ paths remain authoritative.
 ## Authentication and credentials
 
 Producers use commit-pinned `actions/attest` v4 and `GITHUB_TOKEN` with
-`attestations:write`, `deployments:write`, `packages:write`, and `contents:read`.
+`attestations:write`, `deployments:write`, `id-token:write`, `packages:write`, and
+`contents:read`.
 They have no Squawk URL, Squawk credential, Descope exchange, or configured
 Squawk audience.
 

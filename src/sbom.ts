@@ -3,7 +3,7 @@ import type { Component } from "./domain";
 
 const maxComponents = 200;
 const purlSchema = z.string().startsWith("pkg:");
-const cyclonedxSchema = z.object({
+export const cyclonedxPredicateSchema = z.object({
   bomFormat: z.literal("CycloneDX"),
   components: z
     .array(z.object({ name: z.string().min(1), version: z.string().min(1), purl: purlSchema }))
@@ -72,7 +72,7 @@ function componentFrom(purl: string, version: string): Component {
 }
 
 export function parsePredicate(predicate: unknown): readonly Component[] {
-  const cyclonedx = cyclonedxSchema.safeParse(predicate);
+  const cyclonedx = cyclonedxPredicateSchema.safeParse(predicate);
   const components = cyclonedx.success
     ? cyclonedx.data.components.map((component) => componentFrom(component.purl, component.version))
     : spdxSchema.parse(predicate).packages.map((pkg) => {

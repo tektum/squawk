@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { GitHubAppEnv } from "./github";
+import { cyclonedxPredicateSchema } from "./sbom";
 
 const maxBodyBytes = 64 * 1024;
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -35,7 +36,7 @@ export const statementSchema = z.object({
   _type: z.literal("https://in-toto.io/Statement/v1"),
   subject: z.array(z.object({ name: z.string(), digest: z.object({ sha256: z.string() }) })).min(1),
   predicateType: z.literal("https://cyclonedx.org/bom"),
-  predicate: z.unknown(),
+  predicate: cyclonedxPredicateSchema,
 });
 
 export type WebhookEnv = GitHubAppEnv & {

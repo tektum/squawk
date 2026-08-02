@@ -16,6 +16,7 @@ export type FailureCase =
   | "repository"
   | "signature"
   | "subject"
+  | "predicate"
   | "task";
 
 type Fixture = {
@@ -40,12 +41,15 @@ export async function githubWebhookFixture(
     _type: "https://in-toto.io/Statement/v1",
     subject: [{ name: "ghcr.io/owner/demo", digest: { sha256: statementSubjectDigest.slice(7) } }],
     predicateType: "https://cyclonedx.org/bom",
-    predicate: {
-      bomFormat: "CycloneDX",
-      components: [
-        { name: "demo", version: componentVersion, purl: `pkg:npm/demo@${componentVersion}` },
-      ],
-    },
+    predicate:
+      failure === "predicate"
+        ? { spdxVersion: "SPDX-2.3", packages: [] }
+        : {
+            bomFormat: "CycloneDX",
+            components: [
+              { name: "demo", version: componentVersion, purl: `pkg:npm/demo@${componentVersion}` },
+            ],
+          },
   };
   const statementBytes = new TextEncoder().encode(JSON.stringify(statement));
   const body = JSON.stringify({
