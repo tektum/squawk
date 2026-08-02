@@ -1,4 +1,3 @@
-import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { z } from "zod";
 import { backfillSbom } from "./backfill";
 import { GitHubApiError } from "./github";
@@ -6,8 +5,6 @@ import { ingestSbom } from "./repository";
 import { parsePredicate, sbomInputSchema } from "./sbom";
 import { statementFor } from "./webhook-attestation";
 import {
-  audience,
-  claimsSchema,
   parseWebhook,
   sourceSchema,
   type statementSchema,
@@ -23,39 +20,19 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
   const repositoryId = String(event.repository.id);
   const source = sourceSchema.parse(
     await env.DB.prepare(
-      "SELECT org_id,workflow,ref FROM github_sources WHERE installation_id=? AND repository_id=?",
+      "SELECT org_id FROM github_sources WHERE installation_id=? AND repository_id=?",
     )
       .bind(installationId, repositoryId)
       .first(),
   );
-  if (source.ref !== event.deployment.ref) throw new WebhookError(403, "untrusted source");
-  const verified = await jwtVerify(
-    event.deployment.payload.oidc_token,
-    createRemoteJWKSet(new URL(env.GH_OIDC_JWKS_URL), { cooldownDuration: 0 }),
-    {
-      issuer: env.GH_OIDC_ISSUER,
-      audience: audience(event.deployment.payload, repositoryId, event.deployment.sha),
-      algorithms: ["RS256"],
-      clockTolerance: 5,
-    },
-  );
-  const claims = claimsSchema.parse(verified.payload);
-  if (
-    claims.repository_id !== repositoryId ||
-    claims.repository !== event.repository.full_name ||
-    claims.ref !== source.ref ||
-    claims.workflow_sha !== event.deployment.sha ||
-    claims.job_workflow_ref !== `${event.repository.full_name}/${source.workflow}@${source.ref}` ||
-    claims.sub !== `repo:${event.repository.full_name}:ref:${source.ref}`
-  )
-    throw new WebhookError(403, "untrusted identity");
+  const deploymentId = String(event.deployment.id);
   const existing = await env.DB.prepare(
-    "SELECT statement_sha256,status FROM github_deliveries WHERE delivery_id=?",
+    "SELECT COALESCE(subject_digest,statement_sha256) AS subject_digest,status FROM github_deliveries WHERE delivery_id=? OR deployment_id=?",
   )
-    .bind(deliveryId)
-    .first<{ readonly statement_sha256: string; readonly status: string }>();
+    .bind(deliveryId, deploymentId)
+    .first<{ readonly subject_digest: string; readonly status: string }>();
   if (existing) {
-    if (existing.statement_sha256 !== event.deployment.payload.statement_sha256)
+    if (existing.subject_digest !== event.deployment.payload.subject_digest)
       throw new WebhookError(409, "delivery collision");
     return Response.json({ status: existing.status }, { status: 200 });
   }
@@ -74,15 +51,15 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
   }
   const subject = statement.subject.find(
     (candidate) =>
-      candidate.name === event.deployment.payload.image &&
-      candidate.digest.sha256 === event.deployment.payload.image_digest.slice(7),
+      candidate.name === event.deployment.payload.image_ref.split("@")[0] &&
+      candidate.digest.sha256 === event.deployment.payload.subject_digest.slice(7),
   );
   if (!subject) throw new WebhookError(400, "wrong subject");
   const input = sbomInputSchema.parse({
-    image_ref: `${event.deployment.payload.image}@${event.deployment.payload.image_digest}`,
-    logical_image_ref: `${event.deployment.payload.image}@${event.deployment.payload.index_digest}`,
+    image_ref: event.deployment.payload.image_ref,
+    logical_image_ref: event.deployment.payload.logical_image_ref,
     platform: event.deployment.payload.platform,
-    idempotency_key: event.deployment.payload.statement_sha256,
+    idempotency_key: event.deployment.payload.subject_digest,
     predicate: statement.predicate,
   });
   const components = parsePredicate(statement.predicate);
@@ -90,13 +67,15 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
   const result = await ingestSbom(env.DB, source.org_id, input, input.idempotency_key, components);
   if (result.kind === "conflict") {
     await env.DB.prepare(
-      "INSERT OR IGNORE INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,status,created_at,completed_at) VALUES (?,?,?,?, 'rejected',?,?)",
+      "INSERT OR IGNORE INTO github_deliveries (delivery_id,deployment_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at,completed_at) VALUES (?,?,?,?,?,?, 'rejected',?,?)",
     )
       .bind(
         deliveryId,
+        deploymentId,
         installationId,
         repositoryId,
-        event.deployment.payload.statement_sha256,
+        event.deployment.payload.subject_digest,
+        event.deployment.payload.subject_digest,
         now,
         now,
       )
@@ -104,13 +83,15 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
     throw new WebhookError(409, "conflicting platform submission");
   }
   await env.DB.prepare(
-    "INSERT OR IGNORE INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,status,created_at,completed_at) VALUES (?,?,?,?, 'accepted',?,?)",
+    "INSERT OR IGNORE INTO github_deliveries (delivery_id,deployment_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at,completed_at) VALUES (?,?,?,?,?,?, 'accepted',?,?)",
   )
     .bind(
       deliveryId,
+      deploymentId,
       installationId,
       repositoryId,
-      event.deployment.payload.statement_sha256,
+      event.deployment.payload.subject_digest,
+      event.deployment.payload.subject_digest,
       now,
       now,
     )

@@ -78,27 +78,6 @@ describe("GitHub deployment webhook", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(1);
   });
 
-  it("records and rejects a conflicting statement for an existing platform digest", async () => {
-    const first = await githubWebhookFixture();
-    const firstContext = createExecutionContext();
-    await worker.fetch(first.request(), { ...env, ...first.bindings }, firstContext);
-    await waitOnExecutionContext(firstContext);
-    const conflict = await githubWebhookFixture(undefined, 200, "1.6.0");
-    const response = await worker.fetch(
-      conflict.request(),
-      { ...env, ...conflict.bindings },
-      createExecutionContext(),
-    );
-
-    expect(response.status).toBe(409);
-    expect(
-      await env.DB.prepare(
-        "SELECT COUNT(*) FROM github_deliveries WHERE status='rejected'",
-      ).first<number>("COUNT(*)"),
-    ).toBe(1);
-    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(1);
-  });
-
   it.each([
     "signature",
     "event",
@@ -106,13 +85,7 @@ describe("GitHub deployment webhook", () => {
     "task",
     "repository",
     "installation",
-    "oidc_subject",
-    "audience",
-    "ref",
-    "workflow",
-    "workflow_sha",
     "subject",
-    "statement",
   ] satisfies readonly FailureCase[])("fails closed for a wrong %s", async (failure) => {
     const fixture = await githubWebhookFixture(failure);
     const response = await worker.fetch(

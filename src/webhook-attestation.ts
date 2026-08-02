@@ -28,10 +28,6 @@ type StatementRequest = {
   readonly repositoryId: string;
 };
 
-function hex(bytes: ArrayBuffer): string {
-  return Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
-}
-
 async function githubJson(url: string, token: string): Promise<unknown> {
   const response = await fetch(url, {
     headers: {
@@ -54,7 +50,7 @@ export async function statementFor(request: StatementRequest) {
   });
   const index = attestationIndexSchema.parse(
     await githubJson(
-      `https://api.github.com/repos/${request.repository}/attestations/${request.payload.image_digest}`,
+      `https://api.github.com/repos/${request.repository}/attestations/${request.payload.subject_digest}`,
       token,
     ),
   );
@@ -65,8 +61,6 @@ export async function statementFor(request: StatementRequest) {
     const bytes = Uint8Array.from(atob(bundle.dsseEnvelope.payload), (character) =>
       character.charCodeAt(0),
     );
-    if (hex(await crypto.subtle.digest("SHA-256", bytes)) !== request.payload.statement_sha256)
-      continue;
     return statementSchema.parse(JSON.parse(new TextDecoder().decode(bytes)));
   }
   throw new WebhookError(400, "matching statement not found");

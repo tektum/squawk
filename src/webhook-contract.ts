@@ -7,17 +7,18 @@ const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 export const webhookSchema = z.object({
   action: z.literal("created"),
   deployment: z.object({
+    id: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]),
     ref: z.string().min(1),
     sha: z.string().regex(/^[a-f0-9]{40}$/),
     task: z.literal("squawk-sbom"),
     payload: z.object({
       schema_version: z.literal(1),
-      image: z.string().regex(/^ghcr\.io\/[a-z0-9_.-]+\/[a-z0-9_./-]+$/),
       platform: z.enum(["linux/amd64", "linux/arm64"]),
-      image_digest: digestSchema,
-      index_digest: digestSchema,
-      statement_sha256: z.string().regex(/^[a-f0-9]{64}$/),
-      oidc_token: z.string().min(1),
+      image_ref: z.string().regex(/^ghcr\.io\/[a-z0-9_.-]+\/[a-z0-9_./-]+@sha256:[a-f0-9]{64}$/),
+      logical_image_ref: z
+        .string()
+        .regex(/^ghcr\.io\/[a-z0-9_.-]+\/[a-z0-9_./-]+@sha256:[a-f0-9]{64}$/),
+      subject_digest: digestSchema,
     }),
   }),
   installation: z.object({ id: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]) }),
@@ -29,16 +30,6 @@ export const webhookSchema = z.object({
 });
 export const sourceSchema = z.object({
   org_id: z.string().min(1).brand<"TenantId">(),
-  workflow: z.string().regex(/^\.github\/workflows\/[a-zA-Z0-9_.-]+$/),
-  ref: z.string(),
-});
-export const claimsSchema = z.object({
-  repository_id: z.string(),
-  repository: z.string(),
-  ref: z.string(),
-  workflow_sha: z.string(),
-  job_workflow_ref: z.string(),
-  sub: z.string(),
 });
 export const statementSchema = z.object({
   _type: z.literal("https://in-toto.io/Statement/v1"),
@@ -50,8 +41,6 @@ export const statementSchema = z.object({
 export type WebhookEnv = GitHubAppEnv & {
   readonly DB: D1Database;
   readonly EXECUTION_CONTEXT: ExecutionContext;
-  readonly GH_OIDC_ISSUER: string;
-  readonly GH_OIDC_JWKS_URL: string;
   readonly GH_WEBHOOK_SECRET: string;
   readonly OSV_BASE_URL: string;
 };
@@ -107,14 +96,6 @@ async function verifySignature(bytes: Uint8Array, header: string | undefined, se
   );
   if (!(await crypto.subtle.verify("HMAC", key, signature, new Uint8Array(bytes).buffer)))
     throw new WebhookError(401, "invalid signature");
-}
-
-export function audience(
-  payload: z.infer<typeof webhookSchema>["deployment"]["payload"],
-  repositoryId: string,
-  workflowSha: string,
-): string {
-  return `urn:squawk:v1:${repositoryId}:${workflowSha}:${encodeURIComponent(payload.platform)}:${payload.image_digest}:${payload.index_digest}:${payload.statement_sha256}`;
 }
 
 export async function parseWebhook(request: Request, secret: string) {
