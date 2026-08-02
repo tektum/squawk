@@ -19,6 +19,14 @@ variable "descope_discovery_url" { type = string }
 variable "descope_audience" { type = string }
 variable "descope_project_id" { type = string }
 variable "descope_tenant_id" { type = string }
+variable "github_oidc_issuer" {
+  type    = string
+  default = "https://token.actions.githubusercontent.com"
+}
+variable "github_oidc_jwks_url" {
+  type    = string
+  default = "https://token.actions.githubusercontent.com/.well-known/jwks"
+}
 variable "osv_base_url" {
   type    = string
   default = "https://storage.googleapis.com/osv-vulnerabilities"
@@ -36,6 +44,8 @@ locals {
     { name = "DESCOPE_AUDIENCE", type = "plain_text", text = var.descope_audience },
     { name = "DESCOPE_DISCOVERY_URL", type = "plain_text", text = var.descope_discovery_url },
     { name = "DESCOPE_ISSUER", type = "plain_text", text = var.descope_issuer },
+    { name = "GH_OIDC_ISSUER", type = "plain_text", text = var.github_oidc_issuer },
+    { name = "GH_OIDC_JWKS_URL", type = "plain_text", text = var.github_oidc_jwks_url },
     { name = "OSV_BASE_URL", type = "plain_text", text = var.osv_base_url }
   ])
 }
