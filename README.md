@@ -9,8 +9,8 @@ authenticated findings and VEX workflows.
 The Hono Worker validates inbound requests with Zod, uses D1 for tenant,
 SBOM, finding, and delivery state, and calls a small Go/WASM matcher for
 ecosystem-aware version comparison. OpenTofu provisions the Cloudflare
-resources; the sibling `../verity-images-squawk` repository creates one GitHub
-CycloneDX attestation and deployment per platform. The Worker verifies the
+resources. GitHub Actions producers create one GitHub CycloneDX attestation and
+deployment per platform. The Worker verifies the
 deployment webhook HMAC over untouched bytes, then fetches the repository
 attestation by immutable subject digest before using the existing ingest path.
 
