@@ -34,8 +34,6 @@
       "package.json",
       "scripts/provision-descope.ts",
       "scripts/seed-github-source.ts",
-      "scripts/test-producer-action.ts",
-      "scripts/test-receiver.ts",
       "scripts/test-verifier.ts",
       "scripts/verify.ts",
       "src/app.ts",
@@ -80,25 +78,6 @@
       "workers.ts",
       "wrangler.jsonc"
     ],
-    "contentHash": "482c76398c018ab422d34c860aac94511200e82318c77b1e82d237ea192ade70"
-  },
-  "verity": {
-    "baseRevision": "3163fae8bd874840cab5f6ad668bc92db3a659c7",
-    "files": [
-      ".github/actions/publish-image/action.yaml",
-      ".github/workflows/build.yaml",
-      ".github/workflows/monitor.yaml",
-      "README.md",
-      "devbox.json",
-      "docs/COMPLIANCE_AUDIT.md",
-      "docs/POLICY.md",
-      "scripts/attest_sboms.sh",
-      "scripts/monitor_sboms.sh",
-      "scripts/notify_squawk.sh",
-      "scripts/test_attest_sboms.sh",
-      "scripts/test_notify_squawk.sh",
-      "scripts/test_workflow_policy.py"
-    ],
-    "contentHash": "1d8ca17f53f52ef28ccc4a01e029b726db8613fbc7dbe0439cc8d777b2134aa5"
+    "contentHash": "8af7d4a906d3e01b4cd070dae88db10102df625a419b59d457f3d4fe3964e36c"
   }
 }

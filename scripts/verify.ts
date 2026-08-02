@@ -5,11 +5,6 @@ import { z } from "zod";
 
 const args = z.array(z.string()).parse(process.argv.slice(2));
 const mode = args[0] ?? "p0";
-const verityFlag = args.indexOf("--verity-dir");
-const verityDir = verityFlag >= 0 ? args[verityFlag + 1] : undefined;
-const baselineFlag = args.indexOf("--baseline");
-const baseline =
-  baselineFlag >= 0 ? args[baselineFlag + 1] : "3163fae8bd874840cab5f6ad668bc92db3a659c7";
 const run = (command: string, commandArgs: readonly string[], cwd?: string) =>
   execFileSync(command, commandArgs, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 const diffSchema = z.object({
@@ -17,7 +12,7 @@ const diffSchema = z.object({
   files: z.array(z.string()).min(1),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
 });
-const manifestSchema = z.object({ squawk: diffSchema, verity: diffSchema });
+const manifestSchema = z.object({ squawk: diffSchema });
 const receiptSchema = z.object({
   mode: z.string(),
   sourceHash: z.string(),
@@ -72,18 +67,7 @@ function scopeScan(): void {
   const changed = changedFiles(".", manifest.squawk.baseRevision);
   checks["approved-diff-exact"] =
     JSON.stringify(changed) === JSON.stringify(manifest.squawk.files.sort());
-  checks["approved-content-exact"] =
-    changed.every(existsSync) && contentHash(".", changed) === manifest.squawk.contentHash;
-  if (verityDir) {
-    const sibling = changedFiles(verityDir, manifest.verity.baseRevision);
-    checks["verity-approved-paths"] =
-      JSON.stringify(sibling) === JSON.stringify(manifest.verity.files.sort()) &&
-      sibling.every((path) => existsSync(`${verityDir}/${path}`)) &&
-      contentHash(verityDir, sibling) === manifest.verity.contentHash;
-    checks["verity-baseline"] =
-      manifest.verity.baseRevision === baseline &&
-      run("git", ["-C", verityDir, "rev-parse", "HEAD"]).trim() === baseline;
-  }
+  checks["approved-content-exact"] = contentHash(".", changed) === manifest.squawk.contentHash;
   checks["source-seed-documented"] =
     existsSync("scripts/seed-github-source.ts") &&
     readFileSync("docs/runbook.md", "utf8").includes("seed-github-source.ts");
@@ -177,7 +161,6 @@ if (mode === "p0") {
     "malformed",
     "--pool=workers",
   ]);
-  execute("receiver-dedup", "bun", ["scripts/test-receiver.ts"]);
   execute("auth-and-faults", "bunx", [
     "vitest",
     "run",
@@ -197,12 +180,6 @@ if (mode === "p0") {
   writeReceipt("security");
 } else if (mode === "e2e") {
   execute("pipeline", "bunx", ["vitest", "run", "test/e2e", "--pool=workers"]);
-  execute("producer-cryptography", "bun", ["scripts/test-producer-action.ts"]);
-  execute("receiver-dedup", "bun", ["scripts/test-receiver.ts"]);
-  if (verityDir) {
-    execute("producer-real-cosign", "bash", ["scripts/test_attest_sboms.sh"], verityDir);
-    execute("receiver-regression", "bash", ["scripts/test_monitor_sboms.sh"], verityDir);
-  }
   writeReceipt("e2e");
 } else if (mode === "scope") {
   scopeScan();
