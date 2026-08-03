@@ -50,8 +50,8 @@ jobs:
           database_id="$(devbox run -- tofu -chdir=infra output -raw d1_database_id)"
           jq --arg name "squawk-${ENVIRONMENT}" --arg id "$database_id" \
             '.d1_databases[0].database_name = $name | .d1_databases[0].database_id = $id' \
-            wrangler.jsonc > .tmp/wrangler.deploy.json
-          devbox run -- bun run wrangler d1 migrations apply DB --remote --config .tmp/wrangler.deploy.json
+            wrangler.jsonc > wrangler.deploy.json
+          devbox run -- bun run wrangler d1 migrations apply DB --remote --config wrangler.deploy.json
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY_ID }}
           AWS_ENDPOINT_URL_S3: https://${{ vars.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
