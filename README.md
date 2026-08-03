@@ -9,14 +9,14 @@ authenticated findings and VEX workflows.
 The Hono Worker validates inbound requests with Zod, uses D1 for tenant,
 SBOM, finding, and delivery state, and calls a small Go/WASM matcher for
 ecosystem-aware version comparison. OpenTofu provisions the Cloudflare
-resources. GitHub Actions producers create one GitHub CycloneDX attestation and
-deployment per platform. The Worker verifies the
-deployment webhook HMAC over untouched bytes, then fetches the repository
-attestation by immutable subject digest before using the existing ingest path.
+resources. The GitHub App receives `registry_package` events for tagged GHCR
+indexes. The Worker verifies the webhook HMAC over untouched bytes, reads the
+digest-bound SPDX Cosign bundles from public GHCR, and ingests one SBOM per platform.
 
-Squawk intentionally does not verify Sigstore signatures locally. The GitHub App
-webhook and authenticated repository attestation API are the current trust
-boundary; independent Sigstore verification is future hardening.
+Squawk intentionally does not verify Sigstore signatures locally. The signed GitHub
+App webhook, immutable registry digests, and repository allowlist are the current
+trust boundary; independent Sigstore verification is future hardening. Private and
+internal GHCR packages require a separate registry credential and are not supported.
 
 ## Prerequisites and setup
 
