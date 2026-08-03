@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { SubrequestBudget } from "./budget";
+import { sha256 } from "./digest";
 import { installationToken } from "./github";
 
 type DispatchEnv = {
@@ -21,11 +22,6 @@ const pendingSchema = z.object({
   github_dispatch_workflow: z.string(),
   platforms: z.string(),
 });
-
-async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
 
 export async function dispatchPending(
   env: DispatchEnv,
