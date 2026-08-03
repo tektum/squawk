@@ -46,8 +46,16 @@ jobs:
           TF_VAR_descope_tenant_id: ${{ secrets.DESCOPE_TENANT_ID }}
           DESCOPE_MANAGEMENT_KEY: ${{ secrets.DESCOPE_MANAGEMENT_KEY }}
       - name: Apply D1 migrations
-        run: devbox run -- bun run wrangler d1 migrations apply "squawk-${ENVIRONMENT}" --remote
+        run: |
+          database_id="$(devbox run -- tofu -chdir=infra output -raw d1_database_id)"
+          jq --arg name "squawk-${ENVIRONMENT}" --arg id "$database_id" \
+            '.d1_databases[0].database_name = $name | .d1_databases[0].database_id = $id' \
+            wrangler.jsonc > .tmp/wrangler.deploy.json
+          devbox run -- bun run wrangler d1 migrations apply DB --remote --config .tmp/wrangler.deploy.json
         env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY_ID }}
+          AWS_ENDPOINT_URL_S3: https://${{ vars.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_ACCESS_KEY }}
           ENVIRONMENT: ${{ inputs.environment }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
