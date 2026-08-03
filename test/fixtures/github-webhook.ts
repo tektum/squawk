@@ -11,6 +11,7 @@ export const INDEX_DIGEST = `sha256:${"b".repeat(64)}`;
 export const ARM64_DIGEST = `sha256:${"c".repeat(64)}`;
 
 export type FailureCase =
+  | "changed"
   | "event"
   | "ignored"
   | "installation"
@@ -30,12 +31,14 @@ function hex(bytes: ArrayBuffer): string {
 }
 
 type StatementOptions = {
+  readonly componentVersion?: string;
   readonly invalidPredicate?: boolean;
   readonly wrongSubject?: boolean;
 };
 
 function statement(platform: "amd64" | "arm64", digest: string, options: StatementOptions = {}) {
   const rootId = `SPDXRef-${platform}`;
+  const componentVersion = options.componentVersion ?? "1.5.0";
   return {
     _type: "https://in-toto.io/Statement/v0.1",
     subject: [
@@ -65,8 +68,10 @@ function statement(platform: "amd64" | "arm64", digest: string, options: Stateme
             {
               SPDXID: `SPDXRef-component-${platform}`,
               name: "demo",
-              versionInfo: "1.5.0",
-              externalRefs: [{ referenceType: "purl", referenceLocator: "pkg:npm/demo@1.5.0" }],
+              versionInfo: componentVersion,
+              externalRefs: [
+                { referenceType: "purl", referenceLocator: `pkg:npm/demo@${componentVersion}` },
+              ],
             },
           ],
         },
@@ -81,10 +86,13 @@ export async function githubWebhookFixture(
   const appKeys = await generateKeyPair("RS256", { extractable: true });
   const statements = [
     statement("amd64", AMD64_DIGEST, {
+      wrongSubject: failure === "subject",
+    }),
+    statement("arm64", ARM64_DIGEST, {
+      ...(failure === "changed" ? { componentVersion: "2.0.0" } : {}),
       invalidPredicate: failure === "predicate",
       wrongSubject: failure === "subject",
     }),
-    statement("arm64", ARM64_DIGEST, { wrongSubject: failure === "subject" }),
   ];
   const body = JSON.stringify({
     action: failure === "ignored" ? "deleted" : "published",
@@ -95,7 +103,7 @@ export async function githubWebhookFixture(
       namespace: "owner",
       package_type: "container",
       package_version: {
-        id: packageVersionId,
+        id: failure === "changed" ? packageVersionId + 1 : packageVersionId,
         container_metadata: {
           tag: { name: "latest", digest: INDEX_DIGEST },
           manifest: {

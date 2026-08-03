@@ -27,32 +27,36 @@ describe("GitHub registry package webhook", () => {
       .run();
   });
 
-  it("accepts a published container package payload", () => {
-    expect(
-      webhookSchema.safeParse({
-        action: "published",
-        installation: { id: 1 },
-        registry_package: {
-          id: 1,
-          name: "demo",
-          namespace: "owner",
-          package_type: "container",
-          package_version: {
-            id: 2,
-            container_metadata: {
-              tag: { name: "latest", digest: `sha256:${"b".repeat(64)}` },
-              manifest: {
-                digest: `sha256:${"b".repeat(64)}`,
-                media_type: "application/vnd.oci.image.index.v1+json",
-                uri: `repositories/owner/demo/manifests/sha256:${"b".repeat(64)}`,
-              },
+  it("preserves a manifests path segment in a published package URI", () => {
+    const parsed = webhookSchema.safeParse({
+      action: "published",
+      installation: { id: 1 },
+      registry_package: {
+        id: 1,
+        name: "demo",
+        namespace: "owner",
+        package_type: "container",
+        package_version: {
+          id: 2,
+          container_metadata: {
+            tag: { name: "latest", digest: `sha256:${"b".repeat(64)}` },
+            manifest: {
+              digest: `sha256:${"b".repeat(64)}`,
+              media_type: "application/vnd.oci.image.index.v1+json",
+              uri: `repositories/owner/team/manifests/manifests/sha256:${"b".repeat(64)}`,
             },
           },
         },
-        repository: { id: 1, full_name: "owner/repo" },
-        sender: { id: 1, login: "github-actions[bot]" },
-      }).success,
-    ).toBe(true);
+      },
+      repository: { id: 1, full_name: "owner/repo" },
+      sender: { id: 1, login: "github-actions[bot]" },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success)
+      expect(parsed.data.registry_package.package_version.container_metadata.manifest.uri).toBe(
+        "owner/team/manifests",
+      );
   });
 
   it("rejects an SPDX predicate labeled as CycloneDX at the attestation boundary", () => {
@@ -117,6 +121,32 @@ describe("GitHub registry package webhook", () => {
       await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
     ).toBe(1);
     expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
+  });
+
+  it("rejects changed predicate content for an existing image digest", async () => {
+    const first = await githubWebhookFixture();
+    const firstContext = createExecutionContext();
+    const accepted = await worker.fetch(
+      first.request(),
+      { ...env, ...first.bindings },
+      firstContext,
+    );
+    await waitOnExecutionContext(firstContext);
+    const changed = await githubWebhookFixture("changed");
+    const rejected = await worker.fetch(
+      changed.request(),
+      { ...env, ...changed.bindings },
+      createExecutionContext(),
+    );
+
+    expect(accepted.status).toBe(202);
+    expect(rejected.status).toBe(409);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) FROM components WHERE version='2.0.0'").first<number>(
+        "COUNT(*)",
+      ),
+    ).toBe(0);
   });
 
   it.each([

@@ -4,6 +4,7 @@ import type { GitHubAppEnv } from "./github";
 const maxBodyBytes = 64 * 1024;
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const packagePathSchema = z.string().regex(/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/);
+const manifestUriPattern = /^repositories\/(.+)\/manifests\/sha256:[a-f0-9]{64}$/;
 
 export const webhookSchema = z.object({
   action: z.string().min(1),
@@ -22,8 +23,8 @@ export const webhookSchema = z.object({
           media_type: z.string().min(1),
           uri: z
             .string()
-            .regex(/^repositories\/.+\/manifests\/sha256:[a-f0-9]{64}$/)
-            .transform((value) => value.slice("repositories/".length).split("/manifests/")[0])
+            .regex(manifestUriPattern)
+            .transform((value) => value.replace(manifestUriPattern, "$1"))
             .pipe(packagePathSchema),
         }),
       }),

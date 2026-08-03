@@ -1,6 +1,7 @@
 import { backfillSbom } from "./backfill";
+import { sha256 } from "./digest";
 import { statementsForImage } from "./registry-attestation";
-import { ingestSbom } from "./repository";
+import { ingestSboms } from "./repository";
 import { imageIdentityFromPredicate, parsePredicate, sbomInputSchema } from "./sbom";
 import { parseWebhook, sourceSchema, WebhookError, type WebhookEnv } from "./webhook-contract";
 
@@ -46,33 +47,29 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
   const statements = await statementsForImage(image, digest);
   if (statements.length === 0) return new Response(null, { status: 204 });
   const now = Date.now();
-  const sbomIds: string[] = [];
-  let created = false;
-  for (const statement of statements) {
-    const identity = imageIdentityFromPredicate(statement.predicate);
-    const input = sbomInputSchema.parse({
-      image_ref: `${image}@${identity.imageDigest}`,
-      logical_image_ref: `${image}@${digest}`,
-      platform: identity.platform,
-      idempotency_key: `${digest}:${identity.platform}`,
-      predicate: statement.predicate,
-    });
-    const result = await ingestSbom(
-      env.DB,
-      source.org_id,
-      input,
-      input.idempotency_key,
-      parsePredicate(statement.predicate),
+  const requests = await Promise.all(
+    statements.map(async (statement) => {
+      const identity = imageIdentityFromPredicate(statement.predicate);
+      const input = sbomInputSchema.parse({
+        image_ref: `${image}@${identity.imageDigest}`,
+        logical_image_ref: `${image}@${digest}`,
+        platform: identity.platform,
+        idempotency_key: `${digest}:${identity.platform}`,
+        predicate: statement.predicate,
+      });
+      return {
+        input,
+        components: parsePredicate(statement.predicate),
+        predicateSha256: await sha256(JSON.stringify(statement.predicate)),
+      };
+    }),
+  );
+  const result = await ingestSboms(env.DB, source.org_id, requests);
+  if (result.kind === "conflict") throw new WebhookError(409, "conflicting platform submission");
+  for (const sbomId of result.createdSbomIds)
+    env.EXECUTION_CONTEXT.waitUntil(
+      backfillSbom({ database: env.DB, sbomId, osvBaseUrl: env.OSV_BASE_URL }),
     );
-    if (result.kind === "conflict") throw new WebhookError(409, "conflicting platform submission");
-    sbomIds.push(result.sbomId);
-    if (result.kind === "created") {
-      created = true;
-      env.EXECUTION_CONTEXT.waitUntil(
-        backfillSbom({ database: env.DB, sbomId: result.sbomId, osvBaseUrl: env.OSV_BASE_URL }),
-      );
-    }
-  }
   await env.DB.prepare(
     "INSERT OR IGNORE INTO github_deliveries (delivery_id,deployment_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at,completed_at) VALUES (?,?,?,?,?,?, 'accepted',?,?)",
   )
@@ -88,7 +85,7 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
     )
     .run();
   return Response.json(
-    { sbom_ids: sbomIds, status: created ? "pending" : "complete" },
-    { status: created ? 202 : 200 },
+    { sbom_ids: result.sbomIds, status: result.kind === "created" ? "pending" : "complete" },
+    { status: result.kind === "created" ? 202 : 200 },
   );
 }
