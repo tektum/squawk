@@ -27,7 +27,9 @@ jobs:
       - name: Build Worker bundle
         run: devbox run -- bun run wrangler deploy --dry-run --outdir .tmp/worker-build --env=""
       - name: Provision D1
-        run: devbox run -- bash -c 'tofu -chdir=infra init -input=false -backend-config="key=squawk/${ENVIRONMENT}.tfstate" && tofu -chdir=infra apply -auto-approve -target=cloudflare_d1_database.squawk'
+        run: |
+          devbox run -- tofu -chdir=infra init -input=false -backend-config="key=squawk/${ENVIRONMENT}.tfstate"
+          devbox run -- tofu -chdir=infra apply -auto-approve -target=cloudflare_d1_database.squawk
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY_ID }}
           AWS_ENDPOINT_URL_S3: https://${{ vars.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
