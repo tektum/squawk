@@ -9,7 +9,7 @@ import {
   REPOSITORY_ID,
 } from "../fixtures/github-webhook";
 
-describe("GitHub deployment webhook", () => {
+describe("GitHub registry package webhook", () => {
   beforeEach(async () => {
     await env.DB.prepare(
       "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
@@ -27,27 +27,36 @@ describe("GitHub deployment webhook", () => {
       .run();
   });
 
-  it("accepts the stable version 1 deployment payload", () => {
-    expect(
-      webhookSchema.safeParse({
-        action: "created",
-        deployment: {
-          id: 1,
-          ref: "refs/heads/main",
-          sha: "1".repeat(40),
-          task: "squawk-sbom",
-          payload: {
-            schema_version: 1,
-            platform: "linux/amd64",
-            image_ref: `ghcr.io/owner/demo@sha256:${"a".repeat(64)}`,
-            logical_image_ref: `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
-            subject_digest: `sha256:${"a".repeat(64)}`,
+  it("preserves a manifests path segment in a published package URI", () => {
+    const parsed = webhookSchema.safeParse({
+      action: "published",
+      installation: { id: 1 },
+      registry_package: {
+        id: 1,
+        name: "demo",
+        namespace: "owner",
+        package_type: "container",
+        package_version: {
+          id: 2,
+          container_metadata: {
+            tag: { name: "latest", digest: `sha256:${"b".repeat(64)}` },
+            manifest: {
+              digest: `sha256:${"b".repeat(64)}`,
+              media_type: "application/vnd.oci.image.index.v1+json",
+              uri: `repositories/owner/team/manifests/manifests/sha256:${"b".repeat(64)}`,
+            },
           },
         },
-        repository: { id: 1, full_name: "owner/repo" },
-        sender: { id: 1, login: "github-actions[bot]" },
-      }).success,
-    ).toBe(true);
+      },
+      repository: { id: 1, full_name: "owner/repo" },
+      sender: { id: 1, login: "github-actions[bot]" },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success)
+      expect(parsed.data.registry_package.package_version.container_metadata.manifest.uri).toBe(
+        "owner/team/manifests",
+      );
   });
 
   it("rejects an SPDX predicate labeled as CycloneDX at the attestation boundary", () => {
@@ -61,7 +70,7 @@ describe("GitHub deployment webhook", () => {
     ).toBe(false);
   });
 
-  it("ingests the repository attestation when the deployment wire contract is valid", async () => {
+  it("ingests both platform SBOMs for a published image index", async () => {
     const fixture = await githubWebhookFixture();
     const context = createExecutionContext();
     const response = await worker.fetch(
@@ -72,7 +81,7 @@ describe("GitHub deployment webhook", () => {
 
     expect(response.status, await response.clone().text()).toBe(202);
     await waitOnExecutionContext(context);
-    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(1);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
     expect(
       await env.DB.prepare("SELECT status FROM github_deliveries").first<string>("status"),
     ).toBe("accepted");
@@ -94,6 +103,7 @@ describe("GitHub deployment webhook", () => {
     expect(
       await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
     ).toBe(1);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
   });
 
   it("accepts concurrent copies of one delivery without duplicate state", async () => {
@@ -110,14 +120,39 @@ describe("GitHub deployment webhook", () => {
     expect(
       await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
     ).toBe(1);
-    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(1);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
+  });
+
+  it("rejects changed predicate content for an existing image digest", async () => {
+    const first = await githubWebhookFixture();
+    const firstContext = createExecutionContext();
+    const accepted = await worker.fetch(
+      first.request(),
+      { ...env, ...first.bindings },
+      firstContext,
+    );
+    await waitOnExecutionContext(firstContext);
+    const changed = await githubWebhookFixture("changed");
+    const rejected = await worker.fetch(
+      changed.request(),
+      { ...env, ...changed.bindings },
+      createExecutionContext(),
+    );
+
+    expect(accepted.status).toBe(202);
+    expect(rejected.status).toBe(409);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) FROM components WHERE version='2.0.0'").first<number>(
+        "COUNT(*)",
+      ),
+    ).toBe(0);
   });
 
   it.each([
     "signature",
     "event",
-    "action",
-    "task",
+    "installation",
     "repository",
     "predicate",
     "subject",
@@ -135,6 +170,21 @@ describe("GitHub deployment webhook", () => {
       await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
     ).toBe(0);
   });
+
+  it.each(["ignored", "unattested"] satisfies readonly FailureCase[])(
+    "ignores %s package activity",
+    async (failure) => {
+      const fixture = await githubWebhookFixture(failure);
+      const response = await worker.fetch(
+        fixture.request(),
+        { ...env, ...fixture.bindings },
+        createExecutionContext(),
+      );
+
+      expect(response.status).toBe(204);
+      expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(0);
+    },
+  );
 
   it("leaves no delivery receipt when GitHub fails transiently", async () => {
     const fixture = await githubWebhookFixture(undefined, 503);

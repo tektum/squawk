@@ -13,6 +13,106 @@ export type IngestResult =
   | { readonly kind: "retry"; readonly sbomId: SbomId }
   | { readonly kind: "conflict" };
 
+export type IngestRequest = {
+  readonly components: readonly Component[];
+  readonly input: SbomInput;
+  readonly predicateSha256: string;
+};
+
+type IngestManyResult =
+  | {
+      readonly kind: "created" | "retry";
+      readonly createdSbomIds: readonly SbomId[];
+      readonly sbomIds: readonly SbomId[];
+    }
+  | { readonly kind: "conflict" };
+
+async function loadExisting(database: D1Database, tenantId: TenantId, request: IngestRequest) {
+  const existing = await database
+    .prepare(
+      "SELECT id, predicate_sha256 FROM sboms WHERE org_id = ? AND image_ref = ? AND platform = ?",
+    )
+    .bind(tenantId, request.input.image_ref, request.input.platform)
+    .first<{ readonly id: string; readonly predicate_sha256: string }>();
+  if (!existing) return null;
+  return existing.predicate_sha256 === request.predicateSha256
+    ? { kind: "retry" as const, sbomId: SbomIdSchema.parse(existing.id) }
+    : { kind: "conflict" as const };
+}
+
+export async function ingestSboms(
+  database: D1Database,
+  tenantId: TenantId,
+  requests: readonly IngestRequest[],
+): Promise<IngestManyResult> {
+  const prepared: {
+    readonly current: Exclude<IngestResult, { readonly kind: "conflict" }> | null;
+    readonly request: IngestRequest;
+    readonly sbomId: SbomId;
+  }[] = [];
+  for (const request of requests) {
+    const current = await loadExisting(database, tenantId, request);
+    if (current?.kind === "conflict") return current;
+    prepared.push({
+      request,
+      current,
+      sbomId: current?.sbomId ?? SbomIdSchema.parse(crypto.randomUUID()),
+    });
+  }
+  const statements: D1PreparedStatement[] = [];
+  for (const item of prepared.filter((candidate) => !candidate.current)) {
+    statements.push(
+      database
+        .prepare(
+          "INSERT INTO sboms (id, org_id, image_ref, logical_image_ref, platform, predicate_sha256, backfill_status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+        )
+        .bind(
+          item.sbomId,
+          tenantId,
+          item.request.input.image_ref,
+          item.request.input.logical_image_ref,
+          item.request.input.platform,
+          item.request.predicateSha256,
+          Date.now(),
+        ),
+    );
+    for (const component of item.request.components)
+      statements.push(
+        database
+          .prepare(
+            "INSERT INTO components (sbom_id, package_name, ecosystem, version, purl, matchable) VALUES (?, ?, ?, ?, ?, ?)",
+          )
+          .bind(
+            item.sbomId,
+            component.packageName,
+            component.ecosystem,
+            component.version,
+            component.purl,
+            Number(component.matchable),
+          ),
+      );
+  }
+  if (statements.length === 0)
+    return { kind: "retry", createdSbomIds: [], sbomIds: prepared.map((item) => item.sbomId) };
+  try {
+    await database.batch(statements);
+  } catch (error) {
+    const raced = [];
+    for (const request of requests) {
+      const current = await loadExisting(database, tenantId, request);
+      if (current?.kind === "conflict") return current;
+      if (!current) throw error;
+      raced.push(current.sbomId);
+    }
+    return { kind: "retry", createdSbomIds: [], sbomIds: raced };
+  }
+  return {
+    kind: "created",
+    createdSbomIds: prepared.filter((item) => !item.current).map((item) => item.sbomId),
+    sbomIds: prepared.map((item) => item.sbomId),
+  };
+}
+
 export async function ingestSbom(
   database: D1Database,
   tenantId: TenantId,
@@ -20,60 +120,9 @@ export async function ingestSbom(
   predicateSha256: string,
   components: readonly Component[],
 ): Promise<IngestResult> {
-  const loadExisting = async (): Promise<IngestResult | null> => {
-    const existing = await database
-      .prepare(
-        "SELECT id, predicate_sha256 FROM sboms WHERE org_id = ? AND image_ref = ? AND platform = ?",
-      )
-      .bind(tenantId, input.image_ref, input.platform)
-      .first<{ readonly id: string; readonly predicate_sha256: string }>();
-    if (!existing) return null;
-    return existing.predicate_sha256 === predicateSha256
-      ? { kind: "retry", sbomId: SbomIdSchema.parse(existing.id) }
-      : { kind: "conflict" };
-  };
-  const current = await loadExisting();
-  if (current) return current;
-  const sbomId = SbomIdSchema.parse(crypto.randomUUID());
-  const statements: D1PreparedStatement[] = [
-    database
-      .prepare(
-        "INSERT INTO sboms (id, org_id, image_ref, logical_image_ref, platform, predicate_sha256, backfill_status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
-      )
-      .bind(
-        sbomId,
-        tenantId,
-        input.image_ref,
-        input.logical_image_ref,
-        input.platform,
-        predicateSha256,
-        Date.now(),
-      ),
-  ];
-  for (const component of components) {
-    statements.push(
-      database
-        .prepare(
-          "INSERT INTO components (sbom_id, package_name, ecosystem, version, purl, matchable) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(
-          sbomId,
-          component.packageName,
-          component.ecosystem,
-          component.version,
-          component.purl,
-          Number(component.matchable),
-        ),
-    );
-  }
-  try {
-    await database.batch(statements);
-  } catch (error) {
-    const raced = await loadExisting();
-    if (raced) return raced;
-    throw error;
-  }
-  return { kind: "created", sbomId };
+  const result = await ingestSboms(database, tenantId, [{ input, predicateSha256, components }]);
+  if (result.kind === "conflict") return result;
+  return { kind: result.kind, sbomId: SbomIdSchema.parse(result.sbomIds[0]) };
 }
 
 export async function retireSbom(

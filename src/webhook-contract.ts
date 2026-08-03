@@ -1,25 +1,33 @@
 import { z } from "zod";
 import type { GitHubAppEnv } from "./github";
-import { cyclonedxPredicateSchema } from "./sbom";
 
 const maxBodyBytes = 64 * 1024;
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const packagePathSchema = z.string().regex(/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/);
+const manifestUriPattern = /^repositories\/(.+)\/manifests\/sha256:[a-f0-9]{64}$/;
 
 export const webhookSchema = z.object({
-  action: z.literal("created"),
-  deployment: z.object({
-    id: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]),
-    ref: z.string().min(1),
-    sha: z.string().regex(/^[a-f0-9]{40}$/),
-    task: z.literal("squawk-sbom"),
-    payload: z.object({
-      schema_version: z.literal(1),
-      platform: z.enum(["linux/amd64", "linux/arm64"]),
-      image_ref: z.string().regex(/^ghcr\.io\/[a-z0-9_.-]+\/[a-z0-9_./-]+@sha256:[a-f0-9]{64}$/),
-      logical_image_ref: z
-        .string()
-        .regex(/^ghcr\.io\/[a-z0-9_.-]+\/[a-z0-9_./-]+@sha256:[a-f0-9]{64}$/),
-      subject_digest: digestSchema,
+  action: z.string().min(1),
+  installation: z.object({ id: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]) }),
+  registry_package: z.object({
+    id: z.number().int().positive(),
+    name: z.string().min(1),
+    namespace: z.string().min(1),
+    package_type: z.string().min(1),
+    package_version: z.object({
+      id: z.number().int().positive(),
+      container_metadata: z.object({
+        tag: z.object({ name: z.string(), digest: digestSchema }),
+        manifest: z.object({
+          digest: digestSchema,
+          media_type: z.string().min(1),
+          uri: z
+            .string()
+            .regex(manifestUriPattern)
+            .transform((value) => value.replace(manifestUriPattern, "$1"))
+            .pipe(packagePathSchema),
+        }),
+      }),
     }),
   }),
   repository: z.object({
@@ -33,10 +41,10 @@ export const sourceSchema = z.object({
   org_id: z.string().min(1).brand<"TenantId">(),
 });
 export const statementSchema = z.object({
-  _type: z.literal("https://in-toto.io/Statement/v1"),
+  _type: z.enum(["https://in-toto.io/Statement/v0.1", "https://in-toto.io/Statement/v1"]),
   subject: z.array(z.object({ name: z.string(), digest: z.object({ sha256: z.string() }) })).min(1),
-  predicateType: z.literal("https://cyclonedx.org/bom"),
-  predicate: cyclonedxPredicateSchema,
+  predicateType: z.literal("https://spdx.dev/Document"),
+  predicate: z.unknown(),
 });
 
 export type WebhookEnv = GitHubAppEnv & {
@@ -102,7 +110,7 @@ async function verifySignature(bytes: Uint8Array, header: string | undefined, se
 export async function parseWebhook(request: Request, secret: string) {
   const body = await readBody(request);
   await verifySignature(body, request.headers.get("x-hub-signature-256") ?? undefined, secret);
-  if (request.headers.get("x-github-event") !== "deployment")
+  if (request.headers.get("x-github-event") !== "registry_package")
     throw new WebhookError(400, "wrong event");
   return {
     deliveryId: z.string().uuid().parse(request.headers.get("x-github-delivery")),

@@ -3,6 +3,8 @@ import type { Component } from "./domain";
 
 const maxComponents = 200;
 const purlSchema = z.string().startsWith("pkg:");
+const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const platformSchema = z.enum(["linux/amd64", "linux/arm64"]);
 export const cyclonedxPredicateSchema = z.object({
   bomFormat: z.literal("CycloneDX"),
   components: z
@@ -10,22 +12,18 @@ export const cyclonedxPredicateSchema = z.object({
     .min(1)
     .max(maxComponents),
 });
+const spdxPackageSchema = z.object({
+  SPDXID: z.string().min(1).optional(),
+  name: z.string().min(1),
+  versionInfo: z.string().min(1),
+  externalRefs: z
+    .array(z.object({ referenceType: z.string().min(1), referenceLocator: z.string().min(1) }))
+    .min(1),
+});
 const spdxSchema = z.object({
   spdxVersion: z.string().min(1),
-  packages: z
-    .array(
-      z.object({
-        name: z.string().min(1),
-        versionInfo: z.string().min(1),
-        externalRefs: z
-          .array(
-            z.object({ referenceType: z.string().min(1), referenceLocator: z.string().min(1) }),
-          )
-          .min(1),
-      }),
-    )
-    .min(1)
-    .max(maxComponents),
+  documentDescribes: z.array(z.string().min(1)).optional(),
+  packages: z.array(spdxPackageSchema).min(1).max(maxComponents),
 });
 
 export const sbomInputSchema = z.object({
@@ -36,6 +34,22 @@ export const sbomInputSchema = z.object({
   predicate: z.unknown(),
 });
 export type SbomInput = z.infer<typeof sbomInputSchema>;
+
+export function imageIdentityFromPredicate(predicate: unknown) {
+  const spdx = spdxSchema.parse(predicate);
+  const described = spdx.packages.find(
+    (candidate) => candidate.SPDXID && spdx.documentDescribes?.includes(candidate.SPDXID),
+  );
+  const purl = described?.externalRefs.find(
+    (candidate) => candidate.referenceType === "purl",
+  )?.referenceLocator;
+  const digest = /@sha256:([a-f0-9]{64})/.exec(purl ?? "")?.[1];
+  const qualifiers = new URLSearchParams(purl?.split("?")[1] ?? "");
+  return {
+    imageDigest: digestSchema.parse(`sha256:${digest}`),
+    platform: platformSchema.parse(`${qualifiers.get("os")}/${qualifiers.get("arch")}`),
+  };
+}
 
 const purlEcosystems: Readonly<Record<string, string>> = {
   apk: "Alpine",

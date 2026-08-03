@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { backfillSbom } from "../../src/backfill";
 import { TenantIdSchema } from "../../src/domain";
-import { ingestSbom } from "../../src/repository";
+import { ingestSbom, ingestSboms } from "../../src/repository";
 import { parsePredicate, sbomInputSchema } from "../../src/sbom";
 import { respond } from "../http";
 
@@ -110,6 +110,44 @@ describe("SBOM ingestion and historical backfill", () => {
     );
 
     expect(results.map((result) => result.kind).sort()).toEqual(["created", "retry"]);
+  });
+
+  it("rejects a conflicting platform before writing any platform in the batch", async () => {
+    const predicate = {
+      bomFormat: "CycloneDX",
+      components: [{ name: "demo", version: "1.5.0", purl: "pkg:npm/demo@1.5.0" }],
+    };
+    const inputs = ["amd64", "arm64"].map((architecture) =>
+      sbomInputSchema.parse({
+        image_ref: `ghcr.io/demo@sha256:${architecture === "amd64" ? "a".repeat(64) : "b".repeat(64)}`,
+        logical_image_ref: `ghcr.io/demo@sha256:${"c".repeat(64)}`,
+        platform: `linux/${architecture}`,
+        idempotency_key: `${architecture}-idempotency-key`.padEnd(32, "0"),
+        predicate,
+      }),
+    );
+    const arm64 = inputs[1];
+    if (!arm64) throw new Error("expected arm64 fixture");
+    await ingestSbom(
+      env.DB,
+      TenantIdSchema.parse("tenant"),
+      arm64,
+      "existing-predicate",
+      parsePredicate(predicate),
+    );
+
+    const result = await ingestSboms(
+      env.DB,
+      TenantIdSchema.parse("tenant"),
+      inputs.map((input) => ({
+        input,
+        predicateSha256: "new-predicate",
+        components: parsePredicate(predicate),
+      })),
+    );
+
+    expect(result.kind).toBe("conflict");
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(1);
   });
 
   it("rolls back the SBOM identity when component persistence fails", async () => {
