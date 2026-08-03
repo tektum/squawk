@@ -44,7 +44,6 @@ describe("GitHub deployment webhook", () => {
             subject_digest: `sha256:${"a".repeat(64)}`,
           },
         },
-        installation: { id: 1 },
         repository: { id: 1, full_name: "owner/repo" },
         sender: { id: 1, login: "github-actions[bot]" },
       }).success,
@@ -120,7 +119,6 @@ describe("GitHub deployment webhook", () => {
     "action",
     "task",
     "repository",
-    "installation",
     "predicate",
     "subject",
   ] satisfies readonly FailureCase[])("fails closed for a wrong %s", async (failure) => {
