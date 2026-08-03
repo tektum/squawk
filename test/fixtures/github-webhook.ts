@@ -6,17 +6,19 @@ import { server } from "../server";
 export const WEBHOOK_SECRET = "test-webhook-secret";
 export const REPOSITORY_ID = 123;
 export const INSTALLATION_ID = 456;
-export const PLATFORM_DIGEST = `sha256:${"a".repeat(64)}`;
+export const AMD64_DIGEST = `sha256:${"a".repeat(64)}`;
 export const INDEX_DIGEST = `sha256:${"b".repeat(64)}`;
+export const ARM64_DIGEST = `sha256:${"c".repeat(64)}`;
 
 export type FailureCase =
-  | "action"
   | "event"
+  | "ignored"
+  | "installation"
+  | "predicate"
   | "repository"
   | "signature"
   | "subject"
-  | "predicate"
-  | "task";
+  | "unattested";
 
 type Fixture = {
   readonly bindings: Record<string, unknown>;
@@ -27,43 +29,81 @@ function hex(bytes: ArrayBuffer): string {
   return Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
+type StatementOptions = {
+  readonly invalidPredicate?: boolean;
+  readonly wrongSubject?: boolean;
+};
+
+function statement(platform: "amd64" | "arm64", digest: string, options: StatementOptions = {}) {
+  const rootId = `SPDXRef-${platform}`;
+  return {
+    _type: "https://in-toto.io/Statement/v0.1",
+    subject: [
+      {
+        name: "ghcr.io/owner/demo",
+        digest: { sha256: (options.wrongSubject ? AMD64_DIGEST : INDEX_DIGEST).slice(7) },
+      },
+    ],
+    predicateType: "https://spdx.dev/Document",
+    predicate: options.invalidPredicate
+      ? { spdxVersion: "SPDX-2.3", packages: [] }
+      : {
+          spdxVersion: "SPDX-2.3",
+          documentDescribes: [rootId],
+          packages: [
+            {
+              SPDXID: rootId,
+              name: `demo-${platform}`,
+              versionInfo: digest,
+              externalRefs: [
+                {
+                  referenceType: "purl",
+                  referenceLocator: `pkg:oci/demo@${digest}?arch=${platform}&os=linux`,
+                },
+              ],
+            },
+            {
+              SPDXID: `SPDXRef-component-${platform}`,
+              name: "demo",
+              versionInfo: "1.5.0",
+              externalRefs: [{ referenceType: "purl", referenceLocator: "pkg:npm/demo@1.5.0" }],
+            },
+          ],
+        },
+  };
+}
+
 export async function githubWebhookFixture(
   failure?: FailureCase,
-  githubStatus = 200,
-  componentVersion = "1.5.0",
-  deploymentId = 789,
+  registryStatus = 200,
+  packageVersionId = 789,
 ): Promise<Fixture> {
   const appKeys = await generateKeyPair("RS256", { extractable: true });
-  const subjectDigest = failure === "subject" ? `sha256:${"c".repeat(64)}` : PLATFORM_DIGEST;
-  const statementSubjectDigest = failure === "subject" ? PLATFORM_DIGEST : subjectDigest;
-  const statement = {
-    _type: "https://in-toto.io/Statement/v1",
-    subject: [{ name: "ghcr.io/owner/demo", digest: { sha256: statementSubjectDigest.slice(7) } }],
-    predicateType: "https://cyclonedx.org/bom",
-    predicate:
-      failure === "predicate"
-        ? { spdxVersion: "SPDX-2.3", packages: [] }
-        : {
-            bomFormat: "CycloneDX",
-            components: [
-              { name: "demo", version: componentVersion, purl: `pkg:npm/demo@${componentVersion}` },
-            ],
-          },
-  };
-  const statementBytes = new TextEncoder().encode(JSON.stringify(statement));
+  const statements = [
+    statement("amd64", AMD64_DIGEST, {
+      invalidPredicate: failure === "predicate",
+      wrongSubject: failure === "subject",
+    }),
+    statement("arm64", ARM64_DIGEST, { wrongSubject: failure === "subject" }),
+  ];
   const body = JSON.stringify({
-    action: failure === "action" ? "deleted" : "created",
-    deployment: {
-      id: deploymentId,
-      ref: "refs/heads/main",
-      sha: "1".repeat(40),
-      task: failure === "task" ? "deploy" : "squawk-sbom",
-      payload: {
-        schema_version: 1,
-        platform: "linux/amd64",
-        image_ref: `ghcr.io/owner/demo@${PLATFORM_DIGEST}`,
-        logical_image_ref: `ghcr.io/owner/demo@${INDEX_DIGEST}`,
-        subject_digest: subjectDigest,
+    action: failure === "ignored" ? "deleted" : "published",
+    installation: { id: failure === "installation" ? 999 : INSTALLATION_ID },
+    registry_package: {
+      id: 42,
+      name: "demo",
+      namespace: "owner",
+      package_type: "container",
+      package_version: {
+        id: packageVersionId,
+        container_metadata: {
+          tag: { name: "latest", digest: INDEX_DIGEST },
+          manifest: {
+            digest: INDEX_DIGEST,
+            media_type: "application/vnd.oci.image.index.v1+json",
+            uri: `repositories/owner/demo/manifests/${INDEX_DIGEST}`,
+          },
+        },
       },
     },
     repository: {
@@ -80,40 +120,65 @@ export async function githubWebhookFixture(
     ["sign"],
   );
   const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
-  const bundleUrl = "https://api.github.test/attestation-bundle";
-  server.use(
-    http.post(
-      `https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens`,
-      async ({ request }) => {
-        const payload = await request.json();
-        return JSON.stringify(payload) ===
-          JSON.stringify({ repository_ids: [REPOSITORY_ID], permissions: { attestations: "read" } })
-          ? HttpResponse.json({ token: "installation-token" }, { status: 201 })
-          : HttpResponse.json({ message: "token was not repository scoped" }, { status: 400 });
-      },
-    ),
-  );
-  respond({
-    url: `https://api.github.com/repos/owner/repo/attestations/${subjectDigest}`,
-    status: githubStatus,
-    body:
-      githubStatus === 200
-        ? { attestations: [{ repository_id: REPOSITORY_ID, bundle_url: bundleUrl }] }
-        : { message: "try again" },
-  });
-  respond({
-    url: bundleUrl,
-    status: 200,
-    body: {
-      mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
-      verificationMaterial: {},
-      dsseEnvelope: {
-        payload: btoa(String.fromCharCode(...statementBytes)),
-        payloadType: "application/vnd.in-toto+json",
-        signatures: [{ sig: "not-verified-by-design" }],
-      },
+  const attestations = [
+    {
+      manifestDigest: `sha256:${"d".repeat(64)}`,
+      layerDigest: `sha256:${"f".repeat(64)}`,
+      statement: statements[0],
     },
-  });
+    {
+      manifestDigest: `sha256:${"e".repeat(64)}`,
+      layerDigest: `sha256:${"0".repeat(64)}`,
+      statement: statements[1],
+    },
+  ];
+  server.use(
+    http.get("https://ghcr.io/token", () =>
+      registryStatus === 200
+        ? HttpResponse.json({ token: "registry-token" })
+        : HttpResponse.json({ error: "unavailable" }, { status: registryStatus }),
+    ),
+    http.get("https://ghcr.io/v2/owner/demo/manifests/:reference", ({ params }) => {
+      const reference = String(params["reference"]);
+      if (failure === "unattested" && reference === `sha256-${INDEX_DIGEST.slice(7)}`)
+        return HttpResponse.json({ error: "not found" }, { status: 404 });
+      if (reference === `sha256-${INDEX_DIGEST.slice(7)}`)
+        return HttpResponse.json({
+          schemaVersion: 2,
+          manifests: attestations.map((attestation) => ({
+            digest: attestation.manifestDigest,
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+          })),
+        });
+      const attestation = attestations.find((candidate) => candidate.manifestDigest === reference);
+      return attestation
+        ? HttpResponse.json({
+            artifactType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+            layers: [
+              {
+                digest: attestation.layerDigest,
+                mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+              },
+            ],
+          })
+        : HttpResponse.json({ error: "not found" }, { status: 404 });
+    }),
+    http.get("https://ghcr.io/v2/owner/demo/blobs/:digest", ({ params }) => {
+      const attestation = attestations.find(
+        (candidate) => candidate.layerDigest === String(params["digest"]),
+      );
+      return attestation
+        ? HttpResponse.json({
+            mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+            dsseEnvelope: {
+              payload: btoa(JSON.stringify(attestation.statement)),
+              payloadType: "application/vnd.in-toto+json",
+              signatures: [{ sig: "not-verified-by-design" }],
+            },
+          })
+        : HttpResponse.json({ error: "not found" }, { status: 404 });
+    }),
+  );
   respond({
     method: "POST",
     url: "https://osv.test/v1/querybatch",
@@ -136,7 +201,7 @@ export async function githubWebhookFixture(
           headers: {
             "content-type": "application/json",
             "x-github-delivery": deliveryId,
-            "x-github-event": failure === "event" ? "push" : "deployment",
+            "x-github-event": failure === "event" ? "push" : "registry_package",
             "x-hub-signature-256": `sha256=${failure === "signature" ? "0".repeat(64) : hex(signature)}`,
           },
           body,
