@@ -68,6 +68,28 @@ describe("JOSE authentication", () => {
     expect(() => requireCapability(principal, "vex.write")).not.toThrow();
   });
 
+  it("accepts a Descope session token without an audience", async () => {
+    const sessionIssuer = "project-id";
+    const sessionToken = await new SignJWT({
+      sub: "user-1",
+      tenants: ["tenant-1"],
+      permissions: ["findings.read"],
+    })
+      .setProtectedHeader({ alg: "RS256", kid: "key-1" })
+      .setIssuer(sessionIssuer)
+      .setIssuedAt()
+      .setExpirationTime("5m")
+      .sign(privateKey);
+
+    await expect(
+      authenticate(`Bearer ${sessionToken}`, {
+        issuer: sessionIssuer,
+        audience: "",
+        discoveryUrl: `${issuer}/.well-known/openid-configuration`,
+      }),
+    ).resolves.toMatchObject({ tenantId: "tenant-1", userId: "user-1" });
+  });
+
   it("rejects wrong audience and ambiguous tenant context", async () => {
     await expect(
       authenticate(`Bearer ${await token({ tenants: ["tenant-1"], permissions: [] }, "wrong")}`, {

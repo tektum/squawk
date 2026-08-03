@@ -59,7 +59,7 @@ locals {
   descope_enabled       = var.descope_project_id != "" && var.descope_tenant_id != "" && var.descope_audience != ""
   descope_issuer        = coalesce(var.descope_issuer, "https://squawk.invalid")
   descope_discovery_url = coalesce(var.descope_discovery_url, "https://squawk.invalid/.well-known/openid-configuration")
-  descope_audience      = coalesce(var.descope_audience, "https://squawk.invalid/audience")
+  descope_audience      = var.descope_audience
   bindings = concat([
     { name = "DB", type = "d1", database_id = cloudflare_d1_database.squawk.id },
     { name = "DISPATCH_ENABLED", type = "plain_text", text = tostring(var.dispatch_enabled) },

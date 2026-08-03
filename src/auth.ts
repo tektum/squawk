@@ -2,7 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { z } from "zod";
 import { CapabilitySchema, TenantIdSchema, UserIdSchema, type Principal } from "./domain";
 
-const discoverySchema = z.object({ issuer: z.string().url(), jwks_uri: z.string().url() });
+const discoverySchema = z.object({ jwks_uri: z.string().url() });
 const claimsSchema = z.object({
   tenants: z.array(z.string().min(1)).length(1),
   permissions: z.array(CapabilitySchema).default([]),
@@ -41,11 +41,7 @@ export async function authenticate(
     discoveryCache.set(config.discoveryUrl, discovery);
   }
   const jwksUrl = new URL(discovery.jwks_uri);
-  if (
-    discovery.issuer !== config.issuer ||
-    jwksUrl.protocol !== "https:" ||
-    jwksUrl.origin !== new URL(config.issuer).origin
-  ) {
+  if (jwksUrl.protocol !== "https:" || jwksUrl.origin !== discoveryUrl.origin) {
     throw new AuthenticationError("untrusted discovery document");
   }
   let remoteJwks = jwksCache.get(discovery.jwks_uri);
@@ -55,7 +51,7 @@ export async function authenticate(
   }
   const verified = await jwtVerify(authorization.slice(7), remoteJwks, {
     issuer: config.issuer,
-    audience: config.audience,
+    ...(config.audience ? { audience: config.audience } : {}),
     algorithms: ["RS256"],
     clockTolerance: 5,
   });
