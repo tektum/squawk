@@ -13,7 +13,7 @@ run "create_lifecycle" {
     error_message = "worker name drifted"
   }
   assert {
-    condition     = cloudflare_workers_script.squawk.main_module == "worker.js"
+    condition     = cloudflare_worker_version.squawk.main_module == "worker.js" && length(cloudflare_worker_version.squawk.modules) == 1
     error_message = "Worker must deploy as an ES module"
   }
   assert {

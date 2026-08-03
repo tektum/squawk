@@ -42,11 +42,11 @@ No modules.
 | Name | Type |
 | ---- | ---- |
 | [cloudflare_d1_database.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/d1_database) | resource |
+| [cloudflare_worker.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/worker) | resource |
+| [cloudflare_worker_version.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/worker_version) | resource |
 | [cloudflare_workers_cron_trigger.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/workers_cron_trigger) | resource |
 | [cloudflare_workers_deployment.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/workers_deployment) | resource |
-| [cloudflare_workers_script.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/workers_script) | resource |
 | [terraform_data.descope](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
-| [cloudflare_worker_versions.latest](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/data-sources/worker_versions) | data source |
 
 ## Inputs
 
