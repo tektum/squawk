@@ -73,6 +73,9 @@ locals {
 resource "cloudflare_d1_database" "squawk" {
   account_id = var.cloudflare_account_id
   name       = local.worker_name
+  read_replication = {
+    mode = "disabled"
+  }
 }
 
 resource "terraform_data" "descope" {
