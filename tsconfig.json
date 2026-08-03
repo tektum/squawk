@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "target": "ESNext",
+    "lib": ["ESNext", "WebWorker"],
+    "types": ["@cloudflare/vitest-pool-workers/types", "bun-types", "vitest/globals"],
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "test", "worker-configuration.d.ts"],
+  "exclude": ["node_modules", "dist", ".tmp"]
+}

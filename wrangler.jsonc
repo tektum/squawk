@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "squawk",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "squawk",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": { "crons": ["0 */4 * * *"] },
+  "vars": {
+    "DISPATCH_ENABLED": "false",
+    "DESCOPE_AUDIENCE": "https://squawk.invalid/audience",
+    "DESCOPE_DISCOVERY_URL": "https://squawk.invalid/.well-known/openid-configuration",
+    "DESCOPE_ISSUER": "https://squawk.invalid",
+    "OSV_BASE_URL": "https://storage.googleapis.com/osv-vulnerabilities"
+  },
+  "env": {
+    "staging": { "name": "squawk-staging", "vars": { "DISPATCH_ENABLED": "false" } },
+    "production": { "name": "squawk-production", "vars": { "DISPATCH_ENABLED": "false" } }
+  }
+}

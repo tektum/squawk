@@ -1,0 +1,33 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": { "noExplicitAny": "error", "noConfusingVoidType": "error" },
+      "style": {
+        "noDefaultExport": "off",
+        "useImportType": "error",
+        "noNonNullAssertion": "error",
+        "noParameterAssign": "error"
+      },
+      "correctness": { "noUnusedVariables": "error", "noUnusedImports": "error" }
+    }
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!.devbox",
+      "!.omo",
+      "!evidence",
+      "!node_modules",
+      "!dist",
+      "!.tmp",
+      "!.wrangler",
+      "!coverage",
+      "!src/generated",
+      "!worker-configuration.d.ts"
+    ]
+  }
+}
