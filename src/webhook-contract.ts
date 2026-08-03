@@ -22,7 +22,6 @@ export const webhookSchema = z.object({
       subject_digest: digestSchema,
     }),
   }),
-  installation: z.object({ id: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]) }),
   repository: z.object({
     id: z.union([z.number().int().positive(), z.string().regex(/^\d+$/)]),
     full_name: z.string().regex(/^[^/]+\/[^/]+$/),
@@ -30,6 +29,7 @@ export const webhookSchema = z.object({
   sender: z.object({ id: z.number().int().positive(), login: z.string().min(1) }),
 });
 export const sourceSchema = z.object({
+  installation_id: z.string().regex(/^\d+$/),
   org_id: z.string().min(1).brand<"TenantId">(),
 });
 export const statementSchema = z.object({

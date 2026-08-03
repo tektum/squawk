@@ -60,6 +60,14 @@ locals {
   descope_issuer        = coalesce(var.descope_issuer, "https://squawk.invalid")
   descope_discovery_url = coalesce(var.descope_discovery_url, "https://squawk.invalid/.well-known/openid-configuration")
   descope_audience      = var.descope_audience
+  worker_modules = concat(
+    [{ name = basename(var.worker_bundle_path), content_file = var.worker_bundle_path, content_type = "application/javascript+module" }],
+    [for name in fileset(dirname(var.worker_bundle_path), "*.wasm") : {
+      name         = name
+      content_file = "${dirname(var.worker_bundle_path)}/${name}"
+      content_type = "application/wasm"
+    }]
+  )
   bindings = concat([
     { name = "DB", type = "d1", database_id = cloudflare_d1_database.squawk.id },
     { name = "DISPATCH_ENABLED", type = "plain_text", text = tostring(var.dispatch_enabled) },
@@ -73,6 +81,9 @@ locals {
 resource "cloudflare_d1_database" "squawk" {
   account_id = var.cloudflare_account_id
   name       = local.worker_name
+  read_replication = {
+    mode = "disabled"
+  }
 }
 
 resource "terraform_data" "descope" {
@@ -98,14 +109,13 @@ resource "terraform_data" "descope" {
   }
 }
 
-resource "cloudflare_workers_script" "squawk" {
-  account_id         = var.cloudflare_account_id
-  script_name        = local.worker_name
-  content_file       = var.worker_bundle_path
-  content_sha256     = filesha256(var.worker_bundle_path)
-  main_module        = basename(var.worker_bundle_path)
-  compatibility_date = "2026-08-01"
-  bindings           = local.bindings
+resource "cloudflare_worker" "squawk" {
+  account_id = var.cloudflare_account_id
+  name       = local.worker_name
+  subdomain = {
+    enabled          = true
+    previews_enabled = false
+  }
   observability = {
     enabled            = true
     head_sampling_rate = 1
@@ -118,33 +128,35 @@ resource "cloudflare_workers_script" "squawk" {
   depends_on = [terraform_data.descope]
 }
 
-data "cloudflare_worker_versions" "latest" {
-  account_id = var.cloudflare_account_id
-  worker_id  = cloudflare_workers_script.squawk.id
-  max_items  = 1
-  depends_on = [cloudflare_workers_script.squawk]
+resource "cloudflare_worker_version" "squawk" {
+  account_id         = var.cloudflare_account_id
+  worker_id          = cloudflare_worker.squawk.id
+  bindings           = local.bindings
+  compatibility_date = "2026-08-01"
+  main_module        = basename(var.worker_bundle_path)
+  modules            = local.worker_modules
 }
 
 resource "cloudflare_workers_deployment" "squawk" {
   account_id  = var.cloudflare_account_id
-  script_name = cloudflare_workers_script.squawk.script_name
+  script_name = cloudflare_worker.squawk.name
   strategy    = "percentage"
   versions = [{
     percentage = 100
-    version_id = data.cloudflare_worker_versions.latest.result[0].id
+    version_id = cloudflare_worker_version.squawk.id
   }]
 }
 
 resource "cloudflare_workers_cron_trigger" "squawk" {
   account_id  = var.cloudflare_account_id
-  script_name = cloudflare_workers_script.squawk.script_name
+  script_name = cloudflare_worker.squawk.name
   schedules   = [{ cron = "0 */4 * * *" }]
   depends_on  = [cloudflare_workers_deployment.squawk]
 }
 
 output "worker_name" { value = local.worker_name }
 output "d1_database_id" { value = cloudflare_d1_database.squawk.id }
-output "worker_version_id" { value = data.cloudflare_worker_versions.latest.result[0].id }
+output "worker_version_id" { value = cloudflare_worker_version.squawk.id }
 output "worker_configuration" {
   value = {
     d1_binding       = "DB"

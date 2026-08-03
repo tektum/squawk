@@ -12,7 +12,6 @@ export const INDEX_DIGEST = `sha256:${"b".repeat(64)}`;
 export type FailureCase =
   | "action"
   | "event"
-  | "installation"
   | "repository"
   | "signature"
   | "subject"
@@ -67,7 +66,6 @@ export async function githubWebhookFixture(
         subject_digest: subjectDigest,
       },
     },
-    installation: { id: failure === "installation" ? 999 : INSTALLATION_ID },
     repository: {
       id: failure === "repository" ? 999 : REPOSITORY_ID,
       full_name: failure === "repository" ? "owner/other" : "owner/repo",

@@ -16,15 +16,13 @@ export { WebhookError } from "./webhook-contract";
 
 export async function handleGithubWebhook(request: Request, env: WebhookEnv): Promise<Response> {
   const { deliveryId, event } = await parseWebhook(request, env.GH_WEBHOOK_SECRET);
-  const installationId = String(event.installation.id);
   const repositoryId = String(event.repository.id);
   const source = sourceSchema.parse(
-    await env.DB.prepare(
-      "SELECT org_id FROM github_sources WHERE installation_id=? AND repository_id=?",
-    )
-      .bind(installationId, repositoryId)
+    await env.DB.prepare("SELECT installation_id,org_id FROM github_sources WHERE repository_id=?")
+      .bind(repositoryId)
       .first(),
   );
+  const installationId = source.installation_id;
   const deploymentId = String(event.deployment.id);
   const existing = await env.DB.prepare(
     "SELECT COALESCE(subject_digest,statement_sha256) AS subject_digest,status FROM github_deliveries WHERE delivery_id=? OR deployment_id=?",
