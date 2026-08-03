@@ -25,11 +25,26 @@ variable "environment" {
   }
 }
 variable "worker_bundle_path" { type = string }
-variable "descope_issuer" { type = string }
-variable "descope_discovery_url" { type = string }
-variable "descope_audience" { type = string }
-variable "descope_project_id" { type = string }
-variable "descope_tenant_id" { type = string }
+variable "descope_issuer" {
+  type    = string
+  default = ""
+}
+variable "descope_discovery_url" {
+  type    = string
+  default = ""
+}
+variable "descope_audience" {
+  type    = string
+  default = ""
+}
+variable "descope_project_id" {
+  type    = string
+  default = ""
+}
+variable "descope_tenant_id" {
+  type    = string
+  default = ""
+}
 variable "osv_base_url" {
   type    = string
   default = "https://storage.googleapis.com/osv-vulnerabilities"
@@ -40,13 +55,17 @@ variable "dispatch_enabled" {
 }
 
 locals {
-  worker_name = "squawk-${var.environment}"
+  worker_name           = "squawk-${var.environment}"
+  descope_enabled       = var.descope_project_id != "" && var.descope_tenant_id != "" && var.descope_audience != ""
+  descope_issuer        = coalesce(var.descope_issuer, "https://squawk.invalid")
+  descope_discovery_url = coalesce(var.descope_discovery_url, "https://squawk.invalid/.well-known/openid-configuration")
+  descope_audience      = coalesce(var.descope_audience, "https://squawk.invalid/audience")
   bindings = concat([
     { name = "DB", type = "d1", database_id = cloudflare_d1_database.squawk.id },
     { name = "DISPATCH_ENABLED", type = "plain_text", text = tostring(var.dispatch_enabled) },
-    { name = "DESCOPE_AUDIENCE", type = "plain_text", text = var.descope_audience },
-    { name = "DESCOPE_DISCOVERY_URL", type = "plain_text", text = var.descope_discovery_url },
-    { name = "DESCOPE_ISSUER", type = "plain_text", text = var.descope_issuer },
+    { name = "DESCOPE_AUDIENCE", type = "plain_text", text = local.descope_audience },
+    { name = "DESCOPE_DISCOVERY_URL", type = "plain_text", text = local.descope_discovery_url },
+    { name = "DESCOPE_ISSUER", type = "plain_text", text = local.descope_issuer },
     { name = "OSV_BASE_URL", type = "plain_text", text = var.osv_base_url }
   ])
 }
@@ -57,6 +76,7 @@ resource "cloudflare_d1_database" "squawk" {
 }
 
 resource "terraform_data" "descope" {
+  count = local.descope_enabled ? 1 : 0
   triggers_replace = [
     filesha256("../scripts/provision-descope.ts"),
     var.descope_audience,

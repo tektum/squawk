@@ -4,11 +4,6 @@ variables {
   cloudflare_account_id = "account-id"
   environment           = "staging"
   worker_bundle_path    = "fixtures/worker.js"
-  descope_issuer        = "https://issuer.example"
-  descope_discovery_url = "https://issuer.example/.well-known/openid-configuration"
-  descope_audience      = "https://squawk.example/staging"
-  descope_project_id    = "project-id"
-  descope_tenant_id     = "tenant-id"
 }
 
 run "create_lifecycle" {
@@ -24,6 +19,10 @@ run "create_lifecycle" {
   assert {
     condition     = output.worker_configuration.d1_binding == "DB" && output.worker_configuration.cron == "0 */4 * * *"
     error_message = "D1 or cron wiring drifted"
+  }
+  assert {
+    condition     = length(terraform_data.descope) == 0
+    error_message = "Descope must remain optional"
   }
 }
 
