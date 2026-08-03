@@ -24,6 +24,10 @@ run "create_lifecycle" {
     condition     = length(terraform_data.descope) == 0
     error_message = "Descope must remain optional"
   }
+  assert {
+    condition     = cloudflare_d1_database.squawk.read_replication.mode == "disabled"
+    error_message = "D1 read replication default must not drift"
+  }
 }
 
 run "update_lifecycle" {
