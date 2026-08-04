@@ -85,7 +85,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           ENVIRONMENT: ${{ inputs.environment }}
-          GH_APP_ID: ${{ secrets.APP_ID }}
+          GH_APP_ID: ${{ secrets.SQUAWK_APP_ID }}
           GH_APP_INSTALLATION_ID: ${{ vars.GH_APP_INSTALLATION_ID }}
-          GH_APP_PRIVATE_KEY: ${{ secrets.APP_PEM }}
+          GH_APP_PRIVATE_KEY: ${{ secrets.SQUAWK_APP_PEM }}
           GH_WEBHOOK_SECRET: ${{ secrets.GH_WEBHOOK_SECRET }}
