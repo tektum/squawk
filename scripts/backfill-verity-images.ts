@@ -6,18 +6,15 @@ const repository = "tektum/verity-images";
 const repositoryId = 1_316_006_990;
 const installationId = 151_159_455;
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const packageSchema = z.object({
-  id: z.number().int().positive(),
-  name: z.string().min(1),
-  repository: z.object({ id: z.number().int().positive(), full_name: z.string() }).nullable(),
-});
-const versionSchema = z.object({
-  id: z.number().int().positive(),
-  name: digestSchema,
-  metadata: z.object({
-    container: z.object({ tags: z.array(z.string().min(1)) }),
+const candidateSchema = z.array(
+  z.object({
+    package_id: z.number().int().positive(),
+    package_name: z.string().min(1),
+    package_version_id: z.number().int().positive(),
+    tag: z.string().min(1),
+    digest: digestSchema,
   }),
-});
+);
 const applyEnvironmentSchema = z.object({
   GH_WEBHOOK_SECRET: z.string().min(32),
   SQUAWK_WEBHOOK_URL: z
@@ -30,45 +27,11 @@ class BackfillError extends Error {
   readonly name = "BackfillError";
 }
 
-function github(path: string): readonly unknown[] {
-  const rows: unknown[] = [];
-  for (let page = 1; page <= 100; page++) {
-    const result = Bun.spawnSync(["gh", "api", `${path}&page=${page}`]);
-    if (result.exitCode !== 0) throw new BackfillError(result.stderr.toString());
-    const values = z.array(z.unknown()).parse(JSON.parse(result.stdout.toString()));
-    rows.push(...values);
-    if (values.length < 100) return rows;
-  }
-  throw new BackfillError("GitHub pagination exceeded 100 pages");
-}
-
 const apply =
   z.union([z.tuple([]), z.tuple([z.literal("--apply")])]).parse(process.argv.slice(2)).length === 1;
-const packages = z
-  .array(packageSchema)
-  .parse(github(`orgs/${organization}/packages?package_type=container&per_page=100`))
-  .filter((pkg) => pkg.repository?.id === repositoryId && pkg.repository.full_name === repository);
-const candidates = packages
-  .flatMap((pkg) =>
-    z
-      .array(versionSchema)
-      .parse(
-        github(
-          `orgs/${organization}/packages/container/${encodeURIComponent(pkg.name)}/versions?per_page=100`,
-        ),
-      )
-      .flatMap((version) => {
-        const tag = version.metadata.container.tags
-          .filter((value) => !value.startsWith("sha256-"))
-          .sort()[0];
-        return tag ? [{ package: pkg, tag, version }] : [];
-      }),
-  )
-  .sort((left, right) =>
-    `${left.package.name}\0${left.version.name}`.localeCompare(
-      `${right.package.name}\0${right.version.name}`,
-    ),
-  );
+const candidates = candidateSchema.parse(
+  JSON.parse(await Bun.file(new URL("./backfill-verity-images.json", import.meta.url)).text()),
+);
 
 console.log(`${candidates.length} historical tagged indexes${apply ? "" : " (dry run)"}`);
 if (!apply) process.exit(0);
@@ -79,18 +42,18 @@ for (const [index, candidate] of candidates.entries()) {
     action: "updated",
     installation: { id: installationId },
     registry_package: {
-      id: candidate.package.id,
-      name: candidate.package.name,
+      id: candidate.package_id,
+      name: candidate.package_name,
       namespace: organization,
       package_type: "container",
       package_version: {
-        id: candidate.version.id,
+        id: candidate.package_version_id,
         container_metadata: {
-          tag: { name: candidate.tag, digest: candidate.version.name },
+          tag: { name: candidate.tag, digest: candidate.digest },
           manifest: {
-            digest: candidate.version.name,
+            digest: candidate.digest,
             media_type: "application/vnd.oci.image.index.v1+json",
-            uri: `repositories/${organization}/${candidate.package.name}/manifests/${candidate.version.name}`,
+            uri: `repositories/${organization}/${candidate.package_name}/manifests/${candidate.digest}`,
           },
         },
       },
@@ -111,7 +74,7 @@ for (const [index, candidate] of candidates.entries()) {
   });
   if (!response.ok)
     throw new BackfillError(
-      `${candidate.package.name}@${candidate.version.name}: HTTP ${response.status}`,
+      `${candidate.package_name}@${candidate.digest}: HTTP ${response.status}`,
     );
-  console.log(`${index + 1}/${candidates.length} ${candidate.package.name} ${response.status}`);
+  console.log(`${index + 1}/${candidates.length} ${candidate.package_name} ${response.status}`);
 }
