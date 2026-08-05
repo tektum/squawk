@@ -72,9 +72,11 @@ for (const [index, candidate] of candidates.entries()) {
     body,
     signal: AbortSignal.timeout(30_000),
   });
-  if (!response.ok)
+  if (!response.ok) {
+    const error = await response.text();
     throw new BackfillError(
-      `${candidate.package_name}@${candidate.digest}: HTTP ${response.status}`,
+      `${candidate.package_name}@${candidate.digest}: HTTP ${response.status}: ${error.slice(0, 500)}`,
     );
+  }
   console.log(`${index + 1}/${candidates.length} ${candidate.package_name} ${response.status}`);
 }
