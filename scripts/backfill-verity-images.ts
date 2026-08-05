@@ -16,7 +16,7 @@ const candidateSchema = z.array(
   }),
 );
 const applyEnvironmentSchema = z.object({
-  GH_WEBHOOK_SECRET: z.string().min(32),
+  GH_WEBHOOK_SECRET: z.string().min(1),
   SQUAWK_WEBHOOK_URL: z
     .string()
     .url()
