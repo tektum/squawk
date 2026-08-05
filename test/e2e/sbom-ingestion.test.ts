@@ -174,6 +174,30 @@ describe("SBOM ingestion and historical backfill", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(0);
   });
 
+  it("completes without querying OSV when no components are matchable", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('unmatchable','tenant','image','logical','linux/amd64','digest','pending',0)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO components (sbom_id,package_name,ecosystem,version,purl,matchable) VALUES ('unmatchable','image','unknown:oci','digest','pkg:oci/image@digest',0)",
+      ),
+    ]);
+
+    await backfillSbom({
+      database: env.DB,
+      sbomId: "unmatchable",
+      osvBaseUrl: "https://osv.test",
+      now: 1,
+    });
+
+    expect(
+      await env.DB.prepare("SELECT backfill_status FROM sboms WHERE id='unmatchable'").first(
+        "backfill_status",
+      ),
+    ).toBe("complete");
+  });
+
   it("reclaims a stale running backfill", async () => {
     await env.DB.prepare(
       "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,backfill_attempted_at,created_at) VALUES ('stale','tenant','image','logical','linux/amd64','digest','running',0,0)",
