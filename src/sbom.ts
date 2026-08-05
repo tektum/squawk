@@ -51,9 +51,11 @@ export function imageIdentityFromPredicate(predicate: unknown) {
   const purl = decodeURIComponent(rawPurl ?? "");
   const digest = /@sha256:([a-f0-9]{64})/.exec(purl)?.[1];
   const qualifiers = new URLSearchParams(purl.split("?")[1] ?? "");
+  const arch = qualifiers.get("arch");
+  if (!arch) return null;
   return {
     imageDigest: digestSchema.parse(`sha256:${digest}`),
-    platform: platformSchema.parse(`${qualifiers.get("os") ?? "linux"}/${qualifiers.get("arch")}`),
+    platform: platformSchema.parse(`${qualifiers.get("os") ?? "linux"}/${arch}`),
   };
 }
 

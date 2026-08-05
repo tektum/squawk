@@ -31,6 +31,29 @@ describe("SBOM predicate parser", () => {
     ).toEqual({ imageDigest: `sha256:${"a".repeat(64)}`, platform: "linux/amd64" });
   });
 
+  it("does not derive a platform identity from an index SPDX document", () => {
+    expect(
+      imageIdentityFromPredicate({
+        spdxVersion: "SPDX-2.3",
+        documentDescribes: ["SPDXRef-Index"],
+        packages: [
+          {
+            SPDXID: "SPDXRef-Index",
+            name: "index",
+            versionInfo: "latest",
+            primaryPackagePurpose: "CONTAINER",
+            externalRefs: [
+              {
+                referenceType: "purl",
+                referenceLocator: `pkg:oci/example@sha256:${"a".repeat(64)}?mediaType=application%2Fvnd.oci.image.index.v1%2Bjson`,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
   it("retains each CycloneDX component with its own ecosystem", () => {
     const components = parsePredicate({
       bomFormat: "CycloneDX",
