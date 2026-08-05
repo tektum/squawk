@@ -27,6 +27,7 @@
       "!.wrangler",
       "!coverage",
       "!src/generated",
+      "!scripts/backfill-verity-images.json",
       "!worker-configuration.d.ts"
     ]
   }
