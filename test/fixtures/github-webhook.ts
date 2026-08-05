@@ -1,5 +1,5 @@
 import { exportPKCS8, generateKeyPair } from "jose";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { respond } from "../http";
 import { server } from "../server";
 
@@ -12,6 +12,7 @@ export const ARM64_DIGEST = `sha256:${"c".repeat(64)}`;
 
 export type FailureCase =
   | "changed"
+  | "duplicates"
   | "event"
   | "ignored"
   | "installation"
@@ -153,7 +154,10 @@ export async function githubWebhookFixture(
       if (reference === `sha256-${INDEX_DIGEST.slice(7)}`)
         return HttpResponse.json({
           schemaVersion: 2,
-          manifests: attestations.map((attestation) => ({
+          manifests: (failure === "duplicates"
+            ? [...attestations, ...attestations]
+            : attestations
+          ).map((attestation) => ({
             digest: attestation.manifestDigest,
             mediaType: "application/vnd.oci.image.manifest.v1+json",
           })),

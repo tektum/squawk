@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import { statementSchema, webhookSchema } from "../../src/webhook-contract";
 import {
+  type FailureCase,
   githubWebhookFixture,
   INSTALLATION_ID,
-  type FailureCase,
   REPOSITORY_ID,
 } from "../fixtures/github-webhook";
 
@@ -85,6 +85,20 @@ describe("GitHub registry package webhook", () => {
     expect(
       await env.DB.prepare("SELECT status FROM github_deliveries").first<string>("status"),
     ).toBe("accepted");
+  });
+
+  it("ingests one SBOM per platform when attestations are repeated", async () => {
+    const fixture = await githubWebhookFixture("duplicates");
+    const context = createExecutionContext();
+    const response = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      context,
+    );
+    await waitOnExecutionContext(context);
+
+    expect(response.status, await response.clone().text()).toBe(202);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
   });
 
   it("returns success without repeating ingestion when GitHub replays a delivery", async () => {

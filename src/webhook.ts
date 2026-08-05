@@ -3,7 +3,7 @@ import { sha256 } from "./digest";
 import { statementsForImage } from "./registry-attestation";
 import { ingestSboms } from "./repository";
 import { imageIdentityFromPredicate, parsePredicate, sbomInputSchema } from "./sbom";
-import { parseWebhook, sourceSchema, WebhookError, type WebhookEnv } from "./webhook-contract";
+import { parseWebhook, sourceSchema, type WebhookEnv, WebhookError } from "./webhook-contract";
 
 export { WebhookError } from "./webhook-contract";
 
@@ -64,7 +64,15 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
       };
     }),
   );
-  const result = await ingestSboms(env.DB, source.org_id, requests);
+  const uniqueRequests = requests.filter(
+    (request, index) =>
+      requests.findIndex(
+        (candidate) =>
+          candidate.input.image_ref === request.input.image_ref &&
+          candidate.input.platform === request.input.platform,
+      ) === index,
+  );
+  const result = await ingestSboms(env.DB, source.org_id, uniqueRequests);
   if (result.kind === "conflict") throw new WebhookError(409, "conflicting platform submission");
   for (const sbomId of result.createdSbomIds)
     env.EXECUTION_CONTEXT.waitUntil(
