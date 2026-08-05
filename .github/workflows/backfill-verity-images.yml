@@ -23,36 +23,24 @@ jobs:
           enable-cache: "true"
       - run: devbox run install
       - run: devbox run -- bun run build:matcher
-      - name: Build Worker bundle
-        run: devbox run -- bun run wrangler deploy --dry-run --outdir .tmp/worker-build --env=""
       - name: Deploy pull request Worker to staging
         run: |
           devbox run -- tofu -chdir=infra init -input=false -backend-config="key=squawk/staging.tfstate"
-          devbox run -- tofu -chdir=infra apply -auto-approve
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY_ID }}
-          AWS_ENDPOINT_URL_S3: https://${{ vars.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_ACCESS_KEY }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          DESCOPE_MANAGEMENT_KEY: ${{ secrets.DESCOPE_MANAGEMENT_KEY }}
-          TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          TF_VAR_descope_audience: ${{ vars.DESCOPE_AUDIENCE }}
-          TF_VAR_descope_discovery_url: ${{ vars.DESCOPE_DISCOVERY_URL }}
-          TF_VAR_descope_issuer: ${{ vars.DESCOPE_ISSUER }}
-          TF_VAR_descope_project_id: ${{ secrets.DESCOPE_PROJECT_ID }}
-          TF_VAR_descope_tenant_id: ${{ secrets.DESCOPE_TENANT_ID }}
-          TF_VAR_environment: staging
-          TF_VAR_worker_bundle_path: ../.tmp/worker-build/index.js
-      - name: Refresh staging Worker secrets
-        run: |
+          database_id=$(devbox run -- tofu -chdir=infra output -raw d1_database_id)
+          jq --arg id "$database_id" \
+            'del(.env,.vars) | .name="squawk-staging" | .d1_databases[0].database_name="squawk-staging" | .d1_databases[0].database_id=$id' \
+            wrangler.jsonc > wrangler.deploy.json
           jq -n \
             --arg app_id "$GH_APP_ID" \
             --arg installation_id "$GH_APP_INSTALLATION_ID" \
             --arg private_key "$GH_APP_PRIVATE_KEY" \
             --arg webhook_secret "$GH_WEBHOOK_SECRET" \
             '{GH_APP_ID:$app_id,GH_APP_INSTALLATION_ID:$installation_id,GH_APP_PRIVATE_KEY:$private_key,GH_WEBHOOK_SECRET:$webhook_secret}' |
-            devbox run -- bun run wrangler secret bulk --name squawk-staging
+            devbox run -- bun run wrangler deploy --config wrangler.deploy.json --keep-vars --secrets-file /dev/stdin
         env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY_ID }}
+          AWS_ENDPOINT_URL_S3: https://${{ vars.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_ACCESS_KEY }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           GH_APP_ID: ${{ secrets.SQUAWK_APP_ID }}
