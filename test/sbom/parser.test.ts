@@ -1,7 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { parsePredicate } from "../../src/sbom";
+import { imageIdentityFromPredicate, parsePredicate } from "../../src/sbom";
 
 describe("SBOM predicate parser", () => {
+  it("derives identity from a Syft container package without documentDescribes", () => {
+    expect(
+      imageIdentityFromPredicate({
+        spdxVersion: "SPDX-2.3",
+        packages: [
+          {
+            name: "busybox",
+            versionInfo: "1.38.0",
+            externalRefs: [
+              { referenceType: "purl", referenceLocator: "pkg:generic/busybox@1.38.0" },
+            ],
+          },
+          {
+            SPDXID: "SPDXRef-DocumentRoot-Image",
+            name: "local/verity-busybox",
+            versionInfo: "latest-amd64",
+            primaryPackagePurpose: "CONTAINER",
+            externalRefs: [
+              {
+                referenceType: "purl",
+                referenceLocator: `pkg:oci/local%2Fverity-busybox@sha256%3A${"a".repeat(64)}?arch=amd64`,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual({ imageDigest: `sha256:${"a".repeat(64)}`, platform: "linux/amd64" });
+  });
+
   it("retains each CycloneDX component with its own ecosystem", () => {
     const components = parsePredicate({
       bomFormat: "CycloneDX",

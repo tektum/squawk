@@ -15,6 +15,7 @@ export const cyclonedxPredicateSchema = z.object({
 const spdxPackageSchema = z.object({
   SPDXID: z.string().min(1).optional(),
   name: z.string().min(1),
+  primaryPackagePurpose: z.string().optional(),
   versionInfo: z.string().min(1),
   externalRefs: z
     .array(z.object({ referenceType: z.string().min(1), referenceLocator: z.string().min(1) }))
@@ -40,14 +41,19 @@ export function imageIdentityFromPredicate(predicate: unknown) {
   const described = spdx.packages.find(
     (candidate) => candidate.SPDXID && spdx.documentDescribes?.includes(candidate.SPDXID),
   );
-  const purl = described?.externalRefs.find(
+  const containers = spdx.packages.filter(
+    (candidate) => candidate.primaryPackagePurpose === "CONTAINER",
+  );
+  const image = described ?? (containers.length === 1 ? containers[0] : undefined);
+  const rawPurl = image?.externalRefs.find(
     (candidate) => candidate.referenceType === "purl",
   )?.referenceLocator;
-  const digest = /@sha256:([a-f0-9]{64})/.exec(purl ?? "")?.[1];
-  const qualifiers = new URLSearchParams(purl?.split("?")[1] ?? "");
+  const purl = decodeURIComponent(rawPurl ?? "");
+  const digest = /@sha256:([a-f0-9]{64})/.exec(purl)?.[1];
+  const qualifiers = new URLSearchParams(purl.split("?")[1] ?? "");
   return {
     imageDigest: digestSchema.parse(`sha256:${digest}`),
-    platform: platformSchema.parse(`${qualifiers.get("os")}/${qualifiers.get("arch")}`),
+    platform: platformSchema.parse(`${qualifiers.get("os") ?? "linux"}/${qualifiers.get("arch")}`),
   };
 }
 
