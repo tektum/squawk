@@ -42,6 +42,15 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
     .first<{ readonly subject_digest: string; readonly status: string }>();
   if (existing) {
     if (existing.subject_digest !== digest) throw new WebhookError(409, "delivery collision");
+    const pending = await env.DB.prepare(
+      "SELECT id FROM sboms WHERE org_id=? AND logical_image_ref=? AND retired_at IS NULL AND backfill_status IN ('pending','failed')",
+    )
+      .bind(source.org_id, `${image}@${digest}`)
+      .all<{ readonly id: string }>();
+    for (const { id } of pending.results)
+      env.EXECUTION_CONTEXT.waitUntil(
+        backfillSbom({ database: env.DB, sbomId: id, osvBaseUrl: env.OSV_BASE_URL }),
+      );
     return Response.json({ status: existing.status }, { status: 200 });
   }
   const statements = await statementsForImage(image, digest);

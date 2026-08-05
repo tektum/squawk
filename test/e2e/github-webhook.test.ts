@@ -120,11 +120,14 @@ describe("GitHub registry package webhook", () => {
     const context = createExecutionContext();
     const first = await worker.fetch(fixture.request(), { ...env, ...fixture.bindings }, context);
     await waitOnExecutionContext(context);
+    await env.DB.prepare("UPDATE sboms SET backfill_status='failed'").run();
+    const replayContext = createExecutionContext();
     const replay = await worker.fetch(
       fixture.request(),
       { ...env, ...fixture.bindings },
-      createExecutionContext(),
+      replayContext,
     );
+    await waitOnExecutionContext(replayContext);
 
     expect(first.status, await first.clone().text()).toBe(202);
     expect(replay.status).toBe(200);
@@ -132,6 +135,11 @@ describe("GitHub registry package webhook", () => {
       await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
     ).toBe(1);
     expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
+    expect(
+      await env.DB.prepare(
+        "SELECT COUNT(*) FROM sboms WHERE backfill_status='complete'",
+      ).first<number>("COUNT(*)"),
+    ).toBe(2);
   });
 
   it("accepts concurrent copies of one delivery without duplicate state", async () => {
