@@ -17,6 +17,7 @@ export type FailureCase =
   | "ignored"
   | "index-only"
   | "installation"
+  | "noisy-index"
   | "predicate"
   | "repository"
   | "signature"
@@ -160,13 +161,22 @@ export async function githubWebhookFixture(
       if (reference === `sha256-${INDEX_DIGEST.slice(7)}`)
         return HttpResponse.json({
           schemaVersion: 2,
-          manifests: (failure === "duplicates"
-            ? [...attestations, ...attestations]
-            : attestations
-          ).map((attestation) => ({
-            digest: attestation.manifestDigest,
-            mediaType: "application/vnd.oci.image.manifest.v1+json",
-          })),
+          manifests: [
+            ...(failure === "noisy-index"
+              ? Array.from({ length: 21 }, (_, index) => ({
+                  artifactType: "application/vnd.oci.empty.v1+json",
+                  digest: `sha256:${index.toString(16).padStart(64, "0")}`,
+                  mediaType: "application/vnd.oci.image.manifest.v1+json",
+                }))
+              : []),
+            ...(failure === "duplicates" ? [...attestations, ...attestations] : attestations).map(
+              (attestation) => ({
+                artifactType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+                digest: attestation.manifestDigest,
+                mediaType: "application/vnd.oci.image.manifest.v1+json",
+              }),
+            ),
+          ],
         });
       const attestation = attestations.find((candidate) => candidate.manifestDigest === reference);
       return attestation
