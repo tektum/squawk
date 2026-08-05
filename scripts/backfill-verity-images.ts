@@ -30,10 +30,16 @@ class BackfillError extends Error {
   readonly name = "BackfillError";
 }
 
-function github(path: string): unknown {
-  const result = Bun.spawnSync(["gh", "api", "--paginate", path]);
-  if (result.exitCode !== 0) throw new BackfillError(result.stderr.toString());
-  return JSON.parse(result.stdout.toString());
+function github(path: string): readonly unknown[] {
+  const rows: unknown[] = [];
+  for (let page = 1; page <= 100; page++) {
+    const result = Bun.spawnSync(["gh", "api", `${path}&page=${page}`]);
+    if (result.exitCode !== 0) throw new BackfillError(result.stderr.toString());
+    const values = z.array(z.unknown()).parse(JSON.parse(result.stdout.toString()));
+    rows.push(...values);
+    if (values.length < 100) return rows;
+  }
+  throw new BackfillError("GitHub pagination exceeded 100 pages");
 }
 
 const apply =
