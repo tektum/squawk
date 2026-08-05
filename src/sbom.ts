@@ -19,7 +19,7 @@ const spdxPackageSchema = z.object({
   versionInfo: z.string().min(1),
   externalRefs: z
     .array(z.object({ referenceType: z.string().min(1), referenceLocator: z.string().min(1) }))
-    .min(1),
+    .default([]),
 });
 const spdxSchema = z.object({
   spdxVersion: z.string().min(1),
@@ -95,11 +95,13 @@ export function parsePredicate(predicate: unknown): readonly Component[] {
   const cyclonedx = cyclonedxPredicateSchema.safeParse(predicate);
   const components = cyclonedx.success
     ? cyclonedx.data.components.map((component) => componentFrom(component.purl, component.version))
-    : spdxSchema.parse(predicate).packages.map((pkg) => {
+    : spdxSchema.parse(predicate).packages.flatMap((pkg) => {
         const reference = pkg.externalRefs.find((candidate) => candidate.referenceType === "purl");
-        if (!reference) throw new z.ZodError([]);
-        return componentFrom(purlSchema.parse(reference.referenceLocator), pkg.versionInfo);
+        return reference
+          ? [componentFrom(purlSchema.parse(reference.referenceLocator), pkg.versionInfo)]
+          : [];
       });
+  if (components.length === 0) throw new z.ZodError([]);
   const identities = new Set(
     components.map((component) => `${component.purl}\u0000${component.version}`),
   );

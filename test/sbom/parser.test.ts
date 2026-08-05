@@ -124,4 +124,28 @@ describe("SBOM predicate parser", () => {
 
     expect(component).toMatchObject({ packageName: "demo", ecosystem: "npm" });
   });
+
+  it("skips SPDX packages without PURLs", () => {
+    const components = parsePredicate({
+      spdxVersion: "SPDX-2.3",
+      packages: [
+        { name: "unidentified", versionInfo: "1" },
+        {
+          name: "demo",
+          versionInfo: "1.0.0",
+          externalRefs: [{ referenceType: "purl", referenceLocator: "pkg:npm/demo@1.0.0" }],
+        },
+      ],
+    });
+
+    expect(components).toEqual([
+      {
+        packageName: "demo",
+        ecosystem: "npm",
+        matchable: true,
+        version: "1.0.0",
+        purl: "pkg:npm/demo@1.0.0",
+      },
+    ]);
+  });
 });
