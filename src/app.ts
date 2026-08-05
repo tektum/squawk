@@ -7,6 +7,7 @@ import { appendVex, listFindings, retireSbom } from "./repository";
 import { handleGithubWebhook, WebhookError } from "./webhook";
 
 export type WorkerBindings = {
+  readonly BUILD_SHA?: string;
   readonly DB: D1Database;
   readonly DISPATCH_ENABLED: string;
   readonly DESCOPE_AUDIENCE: string;
@@ -24,7 +25,10 @@ export const app = new Hono<{
   Variables: { readonly principal: Principal };
 }>();
 
-app.get("/health", (context) => context.json({ status: "ok" }));
+app.get("/health", (context) => {
+  if (context.env.BUILD_SHA) context.header("x-squawk-version", context.env.BUILD_SHA);
+  return context.json({ status: "ok" });
+});
 
 app.post("/webhooks/github", (context) => handleGithubWebhook(context.req.raw, context.env));
 
