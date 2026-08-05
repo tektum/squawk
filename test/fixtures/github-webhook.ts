@@ -15,6 +15,7 @@ export type FailureCase =
   | "duplicates"
   | "event"
   | "ignored"
+  | "index-only"
   | "installation"
   | "predicate"
   | "repository"
@@ -33,6 +34,7 @@ function hex(bytes: ArrayBuffer): string {
 
 type StatementOptions = {
   readonly componentVersion?: string;
+  readonly indexOnly?: boolean;
   readonly invalidPredicate?: boolean;
   readonly wrongSubject?: boolean;
 };
@@ -62,7 +64,9 @@ function statement(platform: "amd64" | "arm64", digest: string, options: Stateme
               externalRefs: [
                 {
                   referenceType: "purl",
-                  referenceLocator: `pkg:oci/demo@${digest}?arch=${platform}&os=linux`,
+                  referenceLocator: options.indexOnly
+                    ? `pkg:oci/demo@${INDEX_DIGEST}?mediaType=application%2Fvnd.oci.image.index.v1%2Bjson`
+                    : `pkg:oci/demo@${digest}?arch=${platform}&os=linux`,
                 },
               ],
             },
@@ -87,10 +91,12 @@ export async function githubWebhookFixture(
   const appKeys = await generateKeyPair("RS256", { extractable: true });
   const statements = [
     statement("amd64", AMD64_DIGEST, {
+      indexOnly: failure === "index-only",
       wrongSubject: failure === "subject",
     }),
     statement("arm64", ARM64_DIGEST, {
       ...(failure === "changed" ? { componentVersion: "2.0.0" } : {}),
+      indexOnly: failure === "index-only",
       invalidPredicate: failure === "predicate",
       wrongSubject: failure === "subject",
     }),

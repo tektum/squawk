@@ -185,7 +185,7 @@ describe("GitHub registry package webhook", () => {
     ).toBe(0);
   });
 
-  it.each(["ignored", "unattested"] satisfies readonly FailureCase[])(
+  it.each(["ignored", "index-only", "unattested"] satisfies readonly FailureCase[])(
     "ignores %s package activity",
     async (failure) => {
       const fixture = await githubWebhookFixture(failure);

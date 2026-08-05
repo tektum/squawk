@@ -50,6 +50,7 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
   const requests = await Promise.all(
     statements.map(async (statement) => {
       const identity = imageIdentityFromPredicate(statement.predicate);
+      if (!identity) return null;
       const input = sbomInputSchema.parse({
         image_ref: `${image}@${identity.imageDigest}`,
         logical_image_ref: `${image}@${digest}`,
@@ -64,9 +65,11 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
       };
     }),
   );
-  const uniqueRequests = requests.filter(
+  const platformRequests = requests.filter((request) => request !== null);
+  if (platformRequests.length === 0) return new Response(null, { status: 204 });
+  const uniqueRequests = platformRequests.filter(
     (request, index) =>
-      requests.findIndex(
+      platformRequests.findIndex(
         (candidate) =>
           candidate.input.image_ref === request.input.image_ref &&
           candidate.input.platform === request.input.platform,
