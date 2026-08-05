@@ -15,10 +15,11 @@ export const cyclonedxPredicateSchema = z.object({
 const spdxPackageSchema = z.object({
   SPDXID: z.string().min(1).optional(),
   name: z.string().min(1),
+  primaryPackagePurpose: z.string().optional(),
   versionInfo: z.string().min(1),
   externalRefs: z
     .array(z.object({ referenceType: z.string().min(1), referenceLocator: z.string().min(1) }))
-    .min(1),
+    .default([]),
 });
 const spdxSchema = z.object({
   spdxVersion: z.string().min(1),
@@ -40,14 +41,21 @@ export function imageIdentityFromPredicate(predicate: unknown) {
   const described = spdx.packages.find(
     (candidate) => candidate.SPDXID && spdx.documentDescribes?.includes(candidate.SPDXID),
   );
-  const purl = described?.externalRefs.find(
+  const containers = spdx.packages.filter(
+    (candidate) => candidate.primaryPackagePurpose === "CONTAINER",
+  );
+  const image = described ?? (containers.length === 1 ? containers[0] : undefined);
+  const rawPurl = image?.externalRefs.find(
     (candidate) => candidate.referenceType === "purl",
   )?.referenceLocator;
-  const digest = /@sha256:([a-f0-9]{64})/.exec(purl ?? "")?.[1];
-  const qualifiers = new URLSearchParams(purl?.split("?")[1] ?? "");
+  const purl = decodeURIComponent(rawPurl ?? "");
+  const digest = /@sha256:([a-f0-9]{64})/.exec(purl)?.[1];
+  const qualifiers = new URLSearchParams(purl.split("?")[1] ?? "");
+  const arch = qualifiers.get("arch");
+  if (!arch) return null;
   return {
     imageDigest: digestSchema.parse(`sha256:${digest}`),
-    platform: platformSchema.parse(`${qualifiers.get("os")}/${qualifiers.get("arch")}`),
+    platform: platformSchema.parse(`${qualifiers.get("os") ?? "linux"}/${arch}`),
   };
 }
 
@@ -89,11 +97,13 @@ export function parsePredicate(predicate: unknown): readonly Component[] {
   const cyclonedx = cyclonedxPredicateSchema.safeParse(predicate);
   const components = cyclonedx.success
     ? cyclonedx.data.components.map((component) => componentFrom(component.purl, component.version))
-    : spdxSchema.parse(predicate).packages.map((pkg) => {
+    : spdxSchema.parse(predicate).packages.flatMap((pkg) => {
         const reference = pkg.externalRefs.find((candidate) => candidate.referenceType === "purl");
-        if (!reference) throw new z.ZodError([]);
-        return componentFrom(purlSchema.parse(reference.referenceLocator), pkg.versionInfo);
+        return reference
+          ? [componentFrom(purlSchema.parse(reference.referenceLocator), pkg.versionInfo)]
+          : [];
       });
+  if (components.length === 0) throw new z.ZodError([]);
   const identities = new Set(
     components.map((component) => `${component.purl}\u0000${component.version}`),
   );

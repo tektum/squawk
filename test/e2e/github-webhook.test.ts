@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import { statementSchema, webhookSchema } from "../../src/webhook-contract";
 import {
+  type FailureCase,
   githubWebhookFixture,
   INSTALLATION_ID,
-  type FailureCase,
   REPOSITORY_ID,
 } from "../fixtures/github-webhook";
 
@@ -87,16 +87,47 @@ describe("GitHub registry package webhook", () => {
     ).toBe("accepted");
   });
 
+  it("ingests one SBOM per platform when attestations are repeated", async () => {
+    const fixture = await githubWebhookFixture("duplicates");
+    const context = createExecutionContext();
+    const response = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      context,
+    );
+    await waitOnExecutionContext(context);
+
+    expect(response.status, await response.clone().text()).toBe(202);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
+  });
+
+  it("ignores unrelated manifests in a large referrer index", async () => {
+    const fixture = await githubWebhookFixture("noisy-index");
+    const context = createExecutionContext();
+    const response = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      context,
+    );
+    await waitOnExecutionContext(context);
+
+    expect(response.status, await response.clone().text()).toBe(202);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
+  });
+
   it("returns success without repeating ingestion when GitHub replays a delivery", async () => {
     const fixture = await githubWebhookFixture();
     const context = createExecutionContext();
     const first = await worker.fetch(fixture.request(), { ...env, ...fixture.bindings }, context);
     await waitOnExecutionContext(context);
+    await env.DB.prepare("UPDATE sboms SET backfill_status='failed'").run();
+    const replayContext = createExecutionContext();
     const replay = await worker.fetch(
       fixture.request(),
       { ...env, ...fixture.bindings },
-      createExecutionContext(),
+      replayContext,
     );
+    await waitOnExecutionContext(replayContext);
 
     expect(first.status, await first.clone().text()).toBe(202);
     expect(replay.status).toBe(200);
@@ -104,6 +135,11 @@ describe("GitHub registry package webhook", () => {
       await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
     ).toBe(1);
     expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
+    expect(
+      await env.DB.prepare(
+        "SELECT COUNT(*) FROM sboms WHERE backfill_status='complete'",
+      ).first<number>("COUNT(*)"),
+    ).toBe(2);
   });
 
   it("accepts concurrent copies of one delivery without duplicate state", async () => {
@@ -171,7 +207,7 @@ describe("GitHub registry package webhook", () => {
     ).toBe(0);
   });
 
-  it.each(["ignored", "unattested"] satisfies readonly FailureCase[])(
+  it.each(["ignored", "index-only", "unattested"] satisfies readonly FailureCase[])(
     "ignores %s package activity",
     async (failure) => {
       const fixture = await githubWebhookFixture(failure);

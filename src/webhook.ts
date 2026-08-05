@@ -3,7 +3,7 @@ import { sha256 } from "./digest";
 import { statementsForImage } from "./registry-attestation";
 import { ingestSboms } from "./repository";
 import { imageIdentityFromPredicate, parsePredicate, sbomInputSchema } from "./sbom";
-import { parseWebhook, sourceSchema, WebhookError, type WebhookEnv } from "./webhook-contract";
+import { parseWebhook, sourceSchema, type WebhookEnv, WebhookError } from "./webhook-contract";
 
 export { WebhookError } from "./webhook-contract";
 
@@ -42,6 +42,15 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
     .first<{ readonly subject_digest: string; readonly status: string }>();
   if (existing) {
     if (existing.subject_digest !== digest) throw new WebhookError(409, "delivery collision");
+    const pending = await env.DB.prepare(
+      "SELECT id FROM sboms WHERE org_id=? AND logical_image_ref=? AND retired_at IS NULL AND backfill_status IN ('pending','failed')",
+    )
+      .bind(source.org_id, `${image}@${digest}`)
+      .all<{ readonly id: string }>();
+    for (const { id } of pending.results)
+      env.EXECUTION_CONTEXT.waitUntil(
+        backfillSbom({ database: env.DB, sbomId: id, osvBaseUrl: env.OSV_BASE_URL }),
+      );
     return Response.json({ status: existing.status }, { status: 200 });
   }
   const statements = await statementsForImage(image, digest);
@@ -50,6 +59,7 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
   const requests = await Promise.all(
     statements.map(async (statement) => {
       const identity = imageIdentityFromPredicate(statement.predicate);
+      if (!identity) return null;
       const input = sbomInputSchema.parse({
         image_ref: `${image}@${identity.imageDigest}`,
         logical_image_ref: `${image}@${digest}`,
@@ -64,7 +74,17 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
       };
     }),
   );
-  const result = await ingestSboms(env.DB, source.org_id, requests);
+  const platformRequests = requests.filter((request) => request !== null);
+  if (platformRequests.length === 0) return new Response(null, { status: 204 });
+  const uniqueRequests = platformRequests.filter(
+    (request, index) =>
+      platformRequests.findIndex(
+        (candidate) =>
+          candidate.input.image_ref === request.input.image_ref &&
+          candidate.input.platform === request.input.platform,
+      ) === index,
+  );
+  const result = await ingestSboms(env.DB, source.org_id, uniqueRequests);
   if (result.kind === "conflict") throw new WebhookError(409, "conflicting platform submission");
   for (const sbomId of result.createdSbomIds)
     env.EXECUTION_CONTEXT.waitUntil(

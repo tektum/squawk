@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { errors as joseErrors } from "jose";
 import { z } from "zod";
-import { authenticate, AuthenticationError, AuthorizationError, requireCapability } from "./auth";
-import { SbomIdSchema, TenantIdSchema, vexInputSchema, type Principal } from "./domain";
+import { AuthenticationError, AuthorizationError, authenticate, requireCapability } from "./auth";
+import { type Principal, SbomIdSchema, TenantIdSchema, vexInputSchema } from "./domain";
 import { appendVex, listFindings, retireSbom } from "./repository";
 import { handleGithubWebhook, WebhookError } from "./webhook";
 
 export type WorkerBindings = {
+  readonly BUILD_SHA?: string;
   readonly DB: D1Database;
   readonly DISPATCH_ENABLED: string;
   readonly DESCOPE_AUDIENCE: string;
@@ -24,7 +25,10 @@ export const app = new Hono<{
   Variables: { readonly principal: Principal };
 }>();
 
-app.get("/health", (context) => context.json({ status: "ok" }));
+app.get("/health", (context) => {
+  if (context.env.BUILD_SHA) context.header("x-squawk-version", context.env.BUILD_SHA);
+  return context.json({ status: "ok" });
+});
 
 app.post("/webhooks/github", (context) => handleGithubWebhook(context.req.raw, context.env));
 
@@ -96,6 +100,14 @@ app.onError((error, context) => {
   if (error instanceof joseErrors.JOSEError) return context.json({ error: "unauthorized" }, 401);
   if (error instanceof AuthorizationError) return context.json({ error: "forbidden" }, 403);
   if (error instanceof WebhookError) return context.json({ error: error.message }, error.status);
-  if (error instanceof z.ZodError) return context.json({ error: "invalid request" }, 400);
+  if (error instanceof z.ZodError) {
+    console.warn("Invalid request", { issues: error.issues });
+    return context.json({ error: "invalid request" }, 400);
+  }
+  console.error("Unhandled request error", {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  });
   return context.json({ error: "internal error" }, 500);
 });

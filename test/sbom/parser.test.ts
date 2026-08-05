@@ -1,7 +1,59 @@
 import { describe, expect, it } from "vitest";
-import { parsePredicate } from "../../src/sbom";
+import { imageIdentityFromPredicate, parsePredicate } from "../../src/sbom";
 
 describe("SBOM predicate parser", () => {
+  it("derives identity from a Syft container package without documentDescribes", () => {
+    expect(
+      imageIdentityFromPredicate({
+        spdxVersion: "SPDX-2.3",
+        packages: [
+          {
+            name: "busybox",
+            versionInfo: "1.38.0",
+            externalRefs: [
+              { referenceType: "purl", referenceLocator: "pkg:generic/busybox@1.38.0" },
+            ],
+          },
+          {
+            SPDXID: "SPDXRef-DocumentRoot-Image",
+            name: "local/verity-busybox",
+            versionInfo: "latest-amd64",
+            primaryPackagePurpose: "CONTAINER",
+            externalRefs: [
+              {
+                referenceType: "purl",
+                referenceLocator: `pkg:oci/local%2Fverity-busybox@sha256%3A${"a".repeat(64)}?arch=amd64`,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual({ imageDigest: `sha256:${"a".repeat(64)}`, platform: "linux/amd64" });
+  });
+
+  it("does not derive a platform identity from an index SPDX document", () => {
+    expect(
+      imageIdentityFromPredicate({
+        spdxVersion: "SPDX-2.3",
+        documentDescribes: ["SPDXRef-Index"],
+        packages: [
+          {
+            SPDXID: "SPDXRef-Index",
+            name: "index",
+            versionInfo: "latest",
+            primaryPackagePurpose: "CONTAINER",
+            externalRefs: [
+              {
+                referenceType: "purl",
+                referenceLocator: `pkg:oci/example@sha256:${"a".repeat(64)}?mediaType=application%2Fvnd.oci.image.index.v1%2Bjson`,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
   it("retains each CycloneDX component with its own ecosystem", () => {
     const components = parsePredicate({
       bomFormat: "CycloneDX",
@@ -94,5 +146,29 @@ describe("SBOM predicate parser", () => {
     });
 
     expect(component).toMatchObject({ packageName: "demo", ecosystem: "npm" });
+  });
+
+  it("skips SPDX packages without PURLs", () => {
+    const components = parsePredicate({
+      spdxVersion: "SPDX-2.3",
+      packages: [
+        { name: "unidentified", versionInfo: "1" },
+        {
+          name: "demo",
+          versionInfo: "1.0.0",
+          externalRefs: [{ referenceType: "purl", referenceLocator: "pkg:npm/demo@1.0.0" }],
+        },
+      ],
+    });
+
+    expect(components).toEqual([
+      {
+        packageName: "demo",
+        ecosystem: "npm",
+        matchable: true,
+        version: "1.0.0",
+        purl: "pkg:npm/demo@1.0.0",
+      },
+    ]);
   });
 });

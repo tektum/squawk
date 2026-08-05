@@ -67,6 +67,13 @@ export async function backfillSbom(options: BackfillOptions): Promise<void> {
         .bind(options.sbomId)
         .all()
     ).results.map((row) => componentSchema.parse(row));
+    if (components.length === 0) {
+      await options.database
+        .prepare("UPDATE sboms SET backfill_status='complete',backfill_error=NULL WHERE id=?")
+        .bind(options.sbomId)
+        .run();
+      return;
+    }
     options.budget?.take();
     const response = await fetch(`${options.osvBaseUrl}/v1/querybatch`, {
       method: "POST",

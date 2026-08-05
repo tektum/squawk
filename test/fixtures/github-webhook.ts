@@ -1,5 +1,5 @@
 import { exportPKCS8, generateKeyPair } from "jose";
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { respond } from "../http";
 import { server } from "../server";
 
@@ -12,9 +12,12 @@ export const ARM64_DIGEST = `sha256:${"c".repeat(64)}`;
 
 export type FailureCase =
   | "changed"
+  | "duplicates"
   | "event"
   | "ignored"
+  | "index-only"
   | "installation"
+  | "noisy-index"
   | "predicate"
   | "repository"
   | "signature"
@@ -32,6 +35,7 @@ function hex(bytes: ArrayBuffer): string {
 
 type StatementOptions = {
   readonly componentVersion?: string;
+  readonly indexOnly?: boolean;
   readonly invalidPredicate?: boolean;
   readonly wrongSubject?: boolean;
 };
@@ -61,7 +65,9 @@ function statement(platform: "amd64" | "arm64", digest: string, options: Stateme
               externalRefs: [
                 {
                   referenceType: "purl",
-                  referenceLocator: `pkg:oci/demo@${digest}?arch=${platform}&os=linux`,
+                  referenceLocator: options.indexOnly
+                    ? `pkg:oci/demo@${INDEX_DIGEST}?mediaType=application%2Fvnd.oci.image.index.v1%2Bjson`
+                    : `pkg:oci/demo@${digest}?arch=${platform}&os=linux`,
                 },
               ],
             },
@@ -86,10 +92,12 @@ export async function githubWebhookFixture(
   const appKeys = await generateKeyPair("RS256", { extractable: true });
   const statements = [
     statement("amd64", AMD64_DIGEST, {
+      indexOnly: failure === "index-only",
       wrongSubject: failure === "subject",
     }),
     statement("arm64", ARM64_DIGEST, {
       ...(failure === "changed" ? { componentVersion: "2.0.0" } : {}),
+      indexOnly: failure === "index-only",
       invalidPredicate: failure === "predicate",
       wrongSubject: failure === "subject",
     }),
@@ -153,10 +161,22 @@ export async function githubWebhookFixture(
       if (reference === `sha256-${INDEX_DIGEST.slice(7)}`)
         return HttpResponse.json({
           schemaVersion: 2,
-          manifests: attestations.map((attestation) => ({
-            digest: attestation.manifestDigest,
-            mediaType: "application/vnd.oci.image.manifest.v1+json",
-          })),
+          manifests: [
+            ...(failure === "noisy-index"
+              ? Array.from({ length: 21 }, (_, index) => ({
+                  artifactType: "application/vnd.oci.empty.v1+json",
+                  digest: `sha256:${index.toString(16).padStart(64, "0")}`,
+                  mediaType: "application/vnd.oci.image.manifest.v1+json",
+                }))
+              : []),
+            ...(failure === "duplicates" ? [...attestations, ...attestations] : attestations).map(
+              (attestation) => ({
+                artifactType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+                digest: attestation.manifestDigest,
+                mediaType: "application/vnd.oci.image.manifest.v1+json",
+              }),
+            ),
+          ],
         });
       const attestation = attestations.find((candidate) => candidate.manifestDigest === reference);
       return attestation
