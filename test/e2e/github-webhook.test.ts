@@ -101,6 +101,20 @@ describe("GitHub registry package webhook", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
   });
 
+  it("ignores unrelated manifests in a large referrer index", async () => {
+    const fixture = await githubWebhookFixture("noisy-index");
+    const context = createExecutionContext();
+    const response = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      context,
+    );
+    await waitOnExecutionContext(context);
+
+    expect(response.status, await response.clone().text()).toBe(202);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
+  });
+
   it("returns success without repeating ingestion when GitHub replays a delivery", async () => {
     const fixture = await githubWebhookFixture();
     const context = createExecutionContext();

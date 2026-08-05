@@ -3,10 +3,12 @@ import { statementSchema, WebhookError } from "./webhook-contract";
 
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const descriptorSchema = z.object({
+  annotations: z.record(z.string(), z.string()).optional(),
+  artifactType: z.string().optional(),
   digest: digestSchema,
   mediaType: z.string().min(1),
 });
-const indexSchema = z.object({ manifests: z.array(descriptorSchema).max(20) });
+const indexSchema = z.object({ manifests: z.array(descriptorSchema).max(200) });
 const artifactManifestSchema = z.object({
   artifactType: z.literal("application/vnd.dev.sigstore.bundle.v0.3+json"),
   layers: z
@@ -56,7 +58,16 @@ export async function statementsForImage(image: string, digest: string) {
   if (!rawIndex) return [];
   const statements: z.infer<typeof statementSchema>[] = [];
   let sawStatement = false;
-  for (const descriptor of indexSchema.parse(rawIndex).manifests) {
+  const descriptors = indexSchema.parse(rawIndex).manifests.filter((descriptor) => {
+    const predicateType = descriptor.annotations?.["dev.sigstore.bundle.predicateType"];
+    return (
+      predicateType === "https://spdx.dev/Document" ||
+      (!predicateType &&
+        descriptor.artifactType === "application/vnd.dev.sigstore.bundle.v0.3+json")
+    );
+  });
+  if (descriptors.length > 20) throw new WebhookError(400, "too many SPDX statements");
+  for (const descriptor of descriptors) {
     const rawManifest = await registryJson(
       new URL(`${base}/manifests/${descriptor.digest}`),
       token,
