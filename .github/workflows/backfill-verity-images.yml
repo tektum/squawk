@@ -18,6 +18,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.SQUAWK_APP_ID }}
+          private-key: ${{ secrets.SQUAWK_APP_PEM }}
+          owner: tektum
+          repositories: verity-images
       - uses: jetify-com/devbox-install-action@8c6a66ed6273138b1915457069de78cb52fe3bd7 # v0.15.0
         with:
           devbox-version: "0.17.5"
@@ -25,6 +32,6 @@ jobs:
       - run: devbox run install
       - name: Replay historical registry package events
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_WEBHOOK_SECRET: ${{ secrets.GH_WEBHOOK_SECRET }}
         run: devbox run -- bun scripts/backfill-verity-images.ts --apply
