@@ -36,7 +36,15 @@ jobs:
             --arg private_key "$GH_APP_PRIVATE_KEY" \
             --arg webhook_secret "$GH_WEBHOOK_SECRET" \
             '{GH_APP_ID:$app_id,GH_APP_INSTALLATION_ID:$installation_id,GH_APP_PRIVATE_KEY:$private_key,GH_WEBHOOK_SECRET:$webhook_secret}' |
-            devbox run -- bun run wrangler deploy --config wrangler.deploy.json --keep-vars --secrets-file /dev/stdin
+            devbox run -- bun run wrangler deploy --config wrangler.deploy.json --keep-vars --secrets-file /dev/stdin --var "BUILD_SHA:$GITHUB_SHA"
+          version=
+          for _ in {1..60}; do
+            version=$(curl --fail --silent --show-error --head https://squawk-staging.omerc.workers.dev/health |
+              awk 'tolower($1) == "x-squawk-version:" { print $2 }' | tr -d '\r')
+            [[ "$version" == "$GITHUB_SHA" ]] && break
+            sleep 1
+          done
+          [[ "$version" == "$GITHUB_SHA" ]]
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY_ID }}
           AWS_ENDPOINT_URL_S3: https://${{ vars.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
