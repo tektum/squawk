@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { errors as joseErrors } from "jose";
 import { z } from "zod";
-import { authenticate, AuthenticationError, AuthorizationError, requireCapability } from "./auth";
-import { SbomIdSchema, TenantIdSchema, vexInputSchema, type Principal } from "./domain";
+import { AuthenticationError, AuthorizationError, authenticate, requireCapability } from "./auth";
+import { type Principal, SbomIdSchema, TenantIdSchema, vexInputSchema } from "./domain";
 import { appendVex, listFindings, retireSbom } from "./repository";
 import { handleGithubWebhook, WebhookError } from "./webhook";
 
@@ -97,5 +97,10 @@ app.onError((error, context) => {
   if (error instanceof AuthorizationError) return context.json({ error: "forbidden" }, 403);
   if (error instanceof WebhookError) return context.json({ error: error.message }, error.status);
   if (error instanceof z.ZodError) return context.json({ error: "invalid request" }, 400);
+  console.error("Unhandled request error", {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  });
   return context.json({ error: "internal error" }, 500);
 });

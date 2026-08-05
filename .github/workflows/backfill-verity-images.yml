@@ -58,5 +58,13 @@ jobs:
           GH_WEBHOOK_SECRET: ${{ secrets.GH_WEBHOOK_SECRET }}
       - name: Replay historical registry package events
         env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           GH_WEBHOOK_SECRET: ${{ secrets.GH_WEBHOOK_SECRET }}
-        run: devbox run -- bun scripts/backfill-verity-images.ts --apply
+        run: |
+          log=$(mktemp)
+          devbox run -- bun run wrangler tail squawk-staging --format json >"$log" 2>&1 &
+          tail_pid=$!
+          trap 'kill "$tail_pid" 2>/dev/null || true; wait "$tail_pid" 2>/dev/null || true; cat "$log"; rm -f "$log"' EXIT
+          sleep 3
+          devbox run -- bun scripts/backfill-verity-images.ts --apply
