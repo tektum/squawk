@@ -22,6 +22,7 @@ jobs:
           devbox-version: "0.17.5"
           enable-cache: "true"
       - run: devbox run install
+      - run: devbox run -- bun run build:matcher
       - name: Build Worker bundle
         run: devbox run -- bun run wrangler deploy --dry-run --outdir .tmp/worker-build --env=""
       - name: Deploy pull request Worker to staging
