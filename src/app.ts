@@ -96,7 +96,10 @@ app.onError((error, context) => {
   if (error instanceof joseErrors.JOSEError) return context.json({ error: "unauthorized" }, 401);
   if (error instanceof AuthorizationError) return context.json({ error: "forbidden" }, 403);
   if (error instanceof WebhookError) return context.json({ error: error.message }, error.status);
-  if (error instanceof z.ZodError) return context.json({ error: "invalid request" }, 400);
+  if (error instanceof z.ZodError) {
+    console.warn("Invalid request", { issues: error.issues });
+    return context.json({ error: "invalid request" }, 400);
+  }
   console.error("Unhandled request error", {
     name: error.name,
     message: error.message,
