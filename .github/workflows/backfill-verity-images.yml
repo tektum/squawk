@@ -1,15 +1,8 @@
 name: Backfill verity-images
 
-run-name: Backfill verity-images (${{ inputs.apply && 'apply' || 'dry run' }})
-
 on:
-  workflow_dispatch:
-    inputs:
-      apply:
-        description: Send signed webhook replays to Squawk staging
-        required: true
-        default: false
-        type: boolean
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -20,6 +13,7 @@ concurrency:
 
 jobs:
   backfill:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -29,13 +23,7 @@ jobs:
           devbox-version: "0.17.5"
           enable-cache: "true"
       - run: devbox run install
-      - name: Preview historical registry package events
-        if: ${{ !inputs.apply }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: devbox run -- bun scripts/backfill-verity-images.ts
       - name: Replay historical registry package events
-        if: ${{ inputs.apply }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_WEBHOOK_SECRET: ${{ secrets.GH_WEBHOOK_SECRET }}
