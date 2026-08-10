@@ -1,2 +1,4 @@
 github.com/google/osv-scalibr v0.4.6-0.20260807144754-05a624cf9fa6 h1:PgbCbcCnULFggkFIabPhHiOCmGIgb2lA47pVuptcv2k=
 github.com/google/osv-scalibr v0.4.6-0.20260807144754-05a624cf9fa6/go.mod h1:zwpKksQMgyYI0lwFZ5ImtfPnHSt4BUXw6O+AHgrGC+s=
+github.com/google/osv-scalibr v0.5.2 h1:c9S5ded3voVfbRPYpfFfCDKQoMreVeMUU3muzTwg6gY=
+github.com/google/osv-scalibr v0.5.2/go.mod h1:zwpKksQMgyYI0lwFZ5ImtfPnHSt4BUXw6O+AHgrGC+s=
