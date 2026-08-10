@@ -6,7 +6,7 @@
       "name": "squawk",
       "dependencies": {
         "hono": "4.13.1",
-        "jose": "6.2.7",
+        "jose": "6.2.8",
         "zod": "4.4.3",
       },
       "devDependencies": {
@@ -384,7 +384,7 @@
 
     "is-node-process": ["is-node-process@1.2.0", "", {}, "sha512-Vg4o6/fqPxIjtxgUH5QLJhwZ7gW5diGCVlXpuUfELC62CuxM1iHcRe51f2W1FDy04Ai4KJkagKjx3XaqyfRKXw=="],
 
-    "jose": ["jose@6.2.7", "", {}, "sha512-hq1OB1bALKfydZNoViyg6hPVGV4i93ny9Op+n4zP5RSf7SCZEXa/TsG2O3IEr7+WlHRTPnpqDmHfMH6qXAD60w=="],
+    "jose": ["jose@6.2.8", "", {}, "sha512-Bsdjwm3Qsd/P0jR+BHDe3LytDfY7WBq2HmCCLIwuVRHMuEC9ae7/R474GIUdF1NgCyZjzVo/A9DOiOBtXq8ZoQ=="],
 
     "kleur": ["kleur@4.1.5", "", {}, "sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ=="],
 
