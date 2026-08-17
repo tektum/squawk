@@ -49,6 +49,10 @@ variable "osv_base_url" {
   type    = string
   default = "https://storage.googleapis.com/osv-vulnerabilities"
 }
+variable "osv_api_url" {
+  type    = string
+  default = "https://api.osv.dev"
+}
 variable "dispatch_enabled" {
   type    = bool
   default = false
@@ -74,6 +78,7 @@ locals {
     { name = "DESCOPE_AUDIENCE", type = "plain_text", text = local.descope_audience },
     { name = "DESCOPE_DISCOVERY_URL", type = "plain_text", text = local.descope_discovery_url },
     { name = "DESCOPE_ISSUER", type = "plain_text", text = local.descope_issuer },
+    { name = "OSV_API_URL", type = "plain_text", text = var.osv_api_url },
     { name = "OSV_BASE_URL", type = "plain_text", text = var.osv_base_url }
   ])
 }

@@ -12,6 +12,9 @@ ecosystem-aware version comparison. OpenTofu provisions the Cloudflare
 resources. The GitHub App receives `registry_package` events for tagged GHCR
 indexes. The Worker verifies the webhook HMAC over untouched bytes, reads the
 digest-bound SPDX Cosign bundles from public GHCR, and ingests one SBOM per platform.
+Static OSV feeds are read from the public OSV storage bucket; component lookups use
+the OSV query API. These endpoints are separate Worker bindings so published image
+backfills cannot post queries to the static feed host.
 
 Squawk intentionally does not verify Sigstore signatures locally. The signed GitHub
 App webhook, immutable registry digests, and repository allowlist are the current

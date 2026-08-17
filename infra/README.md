@@ -60,6 +60,7 @@ No modules.
 | <a name="input_descope_tenant_id"></a> [descope\_tenant\_id](#input\_descope\_tenant\_id) | n/a | `string` | `""` | no |
 | <a name="input_dispatch_enabled"></a> [dispatch\_enabled](#input\_dispatch\_enabled) | n/a | `bool` | `false` | no |
 | <a name="input_environment"></a> [environment](#input\_environment) | n/a | `string` | n/a | yes |
+| <a name="input_osv_api_url"></a> [osv\_api\_url](#input\_osv\_api\_url) | n/a | `string` | `"https://api.osv.dev"` | no |
 | <a name="input_osv_base_url"></a> [osv\_base\_url](#input\_osv\_base\_url) | n/a | `string` | `"https://storage.googleapis.com/osv-vulnerabilities"` | no |
 | <a name="input_worker_bundle_path"></a> [worker\_bundle\_path](#input\_worker\_bundle\_path) | n/a | `string` | n/a | yes |
 

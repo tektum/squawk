@@ -22,7 +22,8 @@ export type FailureCase =
   | "repository"
   | "signature"
   | "subject"
-  | "unattested";
+  | "unattested"
+  | "vulnerable";
 
 type Fixture = {
   readonly bindings: Record<string, unknown>;
@@ -34,6 +35,7 @@ function hex(bytes: ArrayBuffer): string {
 }
 
 type StatementOptions = {
+  readonly componentName?: string;
   readonly componentVersion?: string;
   readonly indexOnly?: boolean;
   readonly invalidPredicate?: boolean;
@@ -42,6 +44,7 @@ type StatementOptions = {
 
 function statement(platform: "amd64" | "arm64", digest: string, options: StatementOptions = {}) {
   const rootId = `SPDXRef-${platform}`;
+  const componentName = options.componentName ?? "demo";
   const componentVersion = options.componentVersion ?? "1.5.0";
   return {
     _type: "https://in-toto.io/Statement/v0.1",
@@ -73,10 +76,13 @@ function statement(platform: "amd64" | "arm64", digest: string, options: Stateme
             },
             {
               SPDXID: `SPDXRef-component-${platform}`,
-              name: "demo",
+              name: componentName,
               versionInfo: componentVersion,
               externalRefs: [
-                { referenceType: "purl", referenceLocator: `pkg:npm/demo@${componentVersion}` },
+                {
+                  referenceType: "purl",
+                  referenceLocator: `pkg:npm/${componentName}@${componentVersion}`,
+                },
               ],
             },
           ],
@@ -90,12 +96,16 @@ export async function githubWebhookFixture(
   packageVersionId = 789,
 ): Promise<Fixture> {
   const appKeys = await generateKeyPair("RS256", { extractable: true });
+  const component =
+    failure === "vulnerable" ? { componentName: "lodash", componentVersion: "4.17.20" } : {};
   const statements = [
     statement("amd64", AMD64_DIGEST, {
+      ...component,
       indexOnly: failure === "index-only",
       wrongSubject: failure === "subject",
     }),
     statement("arm64", ARM64_DIGEST, {
+      ...component,
       ...(failure === "changed" ? { componentVersion: "2.0.0" } : {}),
       indexOnly: failure === "index-only",
       invalidPredicate: failure === "predicate",
@@ -209,15 +219,40 @@ export async function githubWebhookFixture(
   );
   respond({
     method: "POST",
-    url: "https://osv.test/v1/querybatch",
+    url: "https://api.osv.test/v1/querybatch",
     status: 200,
-    body: { results: [] },
+    body:
+      failure === "vulnerable"
+        ? {
+            results: [
+              {
+                vulns: [
+                  {
+                    id: "GHSA-35jh-r3h4-6jhm",
+                    modified: "2026-01-01T00:00:00Z",
+                    affected: [
+                      {
+                        package: { ecosystem: "npm", name: "lodash" },
+                        ranges: [
+                          { type: "SEMVER", events: [{ introduced: "0" }, { fixed: "4.17.21" }] },
+                        ],
+                        versions: [],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }
+        : { results: [] },
   });
   return {
     bindings: {
       GH_APP_ID: "1234",
+      GH_APP_INSTALLATION_ID: String(INSTALLATION_ID),
       GH_APP_PRIVATE_KEY: await exportPKCS8(appKeys.privateKey),
       GH_WEBHOOK_SECRET: WEBHOOK_SECRET,
+      OSV_API_URL: "https://api.osv.test",
       OSV_BASE_URL: "https://osv.test",
       DISPATCH_ENABLED: "false",
     },

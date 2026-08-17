@@ -10,6 +10,8 @@
 3. Build the Worker, apply `cloudflare_d1_database.squawk`, apply all D1
    migrations, then apply the remaining infrastructure dark with
    `DISPATCH_ENABLED=false`.
+`OSV_BASE_URL` must remain the OSV static-feed bucket and `OSV_API_URL` must point to
+the OSV query API. Do not use the static-feed URL for `/v1/querybatch`.
 4. Seed the immutable source mapping until a management UI exists:
 
 ```sh
