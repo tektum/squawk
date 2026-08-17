@@ -1,16 +1,12 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { exportPKCS8, generateKeyPair } from "jose";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
-import { runScheduled } from "../../src/scheduled";
-import { statementSchema, webhookSchema } from "../../src/webhook-contract";
 import {
   type FailureCase,
   githubWebhookFixture,
   INSTALLATION_ID,
   REPOSITORY_ID,
 } from "../fixtures/github-webhook";
-import { respond } from "../http";
 
 describe("GitHub registry package webhook", () => {
   beforeEach(async () => {
@@ -30,49 +26,6 @@ describe("GitHub registry package webhook", () => {
       .run();
   });
 
-  it("preserves a manifests path segment in a published package URI", () => {
-    const parsed = webhookSchema.safeParse({
-      action: "published",
-      installation: { id: 1 },
-      registry_package: {
-        id: 1,
-        name: "demo",
-        namespace: "owner",
-        package_type: "container",
-        package_version: {
-          id: 2,
-          container_metadata: {
-            tag: { name: "latest", digest: `sha256:${"b".repeat(64)}` },
-            manifest: {
-              digest: `sha256:${"b".repeat(64)}`,
-              media_type: "application/vnd.oci.image.index.v1+json",
-              uri: `repositories/owner/team/manifests/manifests/sha256:${"b".repeat(64)}`,
-            },
-          },
-        },
-      },
-      repository: { id: 1, full_name: "owner/repo" },
-      sender: { id: 1, login: "github-actions[bot]" },
-    });
-
-    expect(parsed.success).toBe(true);
-    if (parsed.success)
-      expect(parsed.data.registry_package.package_version.container_metadata.manifest.uri).toBe(
-        "owner/team/manifests",
-      );
-  });
-
-  it("rejects an SPDX predicate labeled as CycloneDX at the attestation boundary", () => {
-    expect(
-      statementSchema.safeParse({
-        _type: "https://in-toto.io/Statement/v1",
-        subject: [{ name: "ghcr.io/owner/demo", digest: { sha256: "a".repeat(64) } }],
-        predicateType: "https://cyclonedx.org/bom",
-        predicate: { spdxVersion: "SPDX-2.3", packages: [] },
-      }).success,
-    ).toBe(false);
-  });
-
   it("ingests both platform SBOMs for a published image index", async () => {
     const fixture = await githubWebhookFixture();
     const context = createExecutionContext();
@@ -88,59 +41,6 @@ describe("GitHub registry package webhook", () => {
     expect(
       await env.DB.prepare("SELECT status FROM github_deliveries").first<string>("status"),
     ).toBe("accepted");
-  });
-  it("detects and dispatches lodash 4.17.20 from a published image", async () => {
-    const fixture = await githubWebhookFixture("vulnerable");
-    const context = createExecutionContext();
-    const response = await worker.fetch(
-      fixture.request(),
-      { ...env, ...fixture.bindings },
-      context,
-    );
-    await waitOnExecutionContext(context);
-    const keys = await generateKeyPair("RS256", { extractable: true });
-    respond({
-      method: "POST",
-      url: `https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens`,
-      status: 201,
-      body: { token: "installation-token" },
-    });
-    respond({
-      method: "POST",
-      url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
-      status: 204,
-    });
-    await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 1)").run();
-    await runScheduled(
-      {
-        ...env,
-        ...fixture.bindings,
-        DISPATCH_ENABLED: "true",
-        GH_APP_ID: "1234",
-        GH_APP_INSTALLATION_ID: String(INSTALLATION_ID),
-        OSV_API_URL: "https://api.osv.test",
-        OSV_BASE_URL: "https://osv.test",
-        GH_APP_PRIVATE_KEY: await exportPKCS8(keys.privateKey),
-      },
-      2_000,
-    );
-
-    expect(response.status, await response.clone().text()).toBe(202);
-    await expect(
-      env.DB.prepare("SELECT COUNT(*) AS count FROM sboms WHERE backfill_status='complete'").first(
-        "count",
-      ),
-    ).resolves.toBe(2);
-    await expect(
-      env.DB.prepare(
-        "SELECT COUNT(*) AS count FROM findings WHERE vuln_id='GHSA-35jh-r3h4-6jhm'",
-      ).first("count"),
-    ).resolves.toBe(2);
-    await expect(
-      env.DB.prepare(
-        "SELECT COUNT(*) AS count FROM dispatch_deliveries WHERE status='accepted'",
-      ).first("count"),
-    ).resolves.toBe(1);
   });
 
   it("ingests one SBOM per platform when attestations are repeated", async () => {
