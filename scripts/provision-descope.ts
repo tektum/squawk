@@ -175,11 +175,12 @@ if (import.meta.main) {
       name: `Squawk ${environment.DESCOPE_TENANT_ID}`,
       description: `OAuth client for ${environment.DESCOPE_AUDIENCE}`,
       permissionsScopes: [
+        { name: "operations.run", description: "Run scheduled operations" },
         { name: "sbom.manage", description: "Manage stored SBOM data" },
         { name: "findings.read", description: "Read tenant findings" },
         { name: "vex.write", description: "Write human VEX statements" },
       ],
-      humanGrant: { permissions: ["sbom.manage", "findings.read", "vex.write"] },
+      humanGrant: { permissions: ["operations.run", "sbom.manage", "findings.read", "vex.write"] },
     },
   });
   console.log(JSON.stringify(result));

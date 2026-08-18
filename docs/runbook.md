@@ -25,6 +25,17 @@ bun scripts/seed-github-source.ts squawk-staging \
 6. Exercise human findings, VEX, SBOM retirement, and one cross-repository dispatch
    receipt with a hosted Descope session.
 
+Manually trigger the deployed scheduled pipeline with a hosted Descope human token
+that includes `operations.run`:
+
+```sh
+curl -X POST https://WORKER/v1/operations/scheduled \
+  -H "Authorization: Bearer $DESCOPE_ACCESS_TOKEN"
+```
+
+The endpoint returns `204` only after the scheduled pipeline completes. It rejects
+missing tokens, principals without `operations.run`, and machine-only principals.
+
 GitHub 5xx/rate-limit failures return a retryable webhook response and create no
 delivery receipt. Inspect inbound state with
 `SELECT * FROM github_deliveries ORDER BY created_at DESC`; failed backfills with

@@ -5,6 +5,7 @@ import { AuthenticationError, AuthorizationError, authenticate, requireCapabilit
 import { type Principal, SbomIdSchema, TenantIdSchema, vexInputSchema } from "./domain";
 import { appendVex, listFindings, retireSbom } from "./repository";
 import { handleGithubWebhook, WebhookError } from "./webhook";
+import { runScheduled } from "./scheduled";
 
 export type WorkerBindings = {
   readonly BUILD_SHA?: string;
@@ -14,9 +15,11 @@ export type WorkerBindings = {
   readonly DESCOPE_DISCOVERY_URL: string;
   readonly DESCOPE_ISSUER: string;
   readonly GH_APP_ID: string;
+  readonly GH_APP_INSTALLATION_ID: string;
   readonly GH_APP_PRIVATE_KEY: string;
   readonly GH_WEBHOOK_SECRET: string;
   readonly OSV_API_URL: string;
+  readonly OSV_ADVISORY_JOBS: Queue;
   readonly OSV_BASE_URL: string;
   readonly EXECUTION_CONTEXT: ExecutionContext;
 };
@@ -48,6 +51,14 @@ function principalForOrg(principal: Principal, orgId: string): Principal {
     throw new AuthorizationError("wrong tenant");
   return principal;
 }
+
+app.post("/v1/operations/scheduled", async (context) => {
+  const principal = context.get("principal");
+  requireCapability(principal, "operations.run");
+  if (!principal.userId) throw new AuthorizationError("human identity required");
+  await runScheduled(context.env);
+  return context.body(null, 204);
+});
 
 app.delete("/v1/sboms/:id", async (context) => {
   const principal = context.get("principal");
