@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "hono": "4.13.2",
-    "jose": "6.2.8",
+    "jose": "6.2.9",
     "zod": "4.4.3"
   },
   "devDependencies": {
