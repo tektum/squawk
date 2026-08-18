@@ -82,7 +82,7 @@ locals {
     { name = "DESCOPE_ISSUER", type = "plain_text", text = local.descope_issuer },
     { name = "OSV_API_URL", type = "plain_text", text = var.osv_api_url },
     { name = "OSV_BASE_URL", type = "plain_text", text = var.osv_base_url },
-    { name = "OSV_ADVISORY_JOBS", type = "queue", queue_name = cloudflare_queue.osv_advisories.name }
+    { name = "OSV_ADVISORY_JOBS", type = "queue", queue_name = cloudflare_queue.osv_advisories.queue_name }
   ])
 }
 
@@ -96,12 +96,12 @@ resource "cloudflare_d1_database" "squawk" {
 
 resource "cloudflare_queue" "osv_advisories" {
   account_id = var.cloudflare_account_id
-  name       = local.advisory_queue_name
+  queue_name = local.advisory_queue_name
 }
 
 resource "cloudflare_queue" "osv_advisories_dlq" {
   account_id = var.cloudflare_account_id
-  name       = local.advisory_dlq_name
+  queue_name = local.advisory_dlq_name
 }
 
 resource "terraform_data" "descope" {
@@ -170,7 +170,7 @@ resource "cloudflare_queue_consumer" "osv_advisories" {
   queue_id          = cloudflare_queue.osv_advisories.id
   script_name       = cloudflare_worker.squawk.name
   type              = "worker"
-  dead_letter_queue = cloudflare_queue.osv_advisories_dlq.name
+  dead_letter_queue = cloudflare_queue.osv_advisories_dlq.queue_name
   settings = {
     batch_size       = 10
     max_concurrency  = 10
@@ -196,7 +196,7 @@ output "worker_configuration" {
     d1_binding       = "DB"
     cron             = "0 */4 * * *"
     observability    = true
-    advisory_queue   = cloudflare_queue.osv_advisories.name
+    advisory_queue   = cloudflare_queue.osv_advisories.queue_name
     dispatch_enabled = var.dispatch_enabled
   }
 }
