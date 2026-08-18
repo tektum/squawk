@@ -135,12 +135,7 @@ describe("security faults and scheduled SLOs", () => {
         ],
       },
     });
-    await backfillSbom({
-      database: env.DB,
-      sbomId: "pending",
-      osvBaseUrl: "https://osv.test",
-      now,
-    });
+    await backfillSbom({ database: env.DB, sbomId: "pending", osvApiUrl: "https://osv.test", now });
     const environment = await dispatchEnv();
     respond({
       method: "POST",

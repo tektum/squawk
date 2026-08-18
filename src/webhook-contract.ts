@@ -51,6 +51,7 @@ export type WebhookEnv = GitHubAppEnv & {
   readonly DB: D1Database;
   readonly EXECUTION_CONTEXT: ExecutionContext;
   readonly GH_WEBHOOK_SECRET: string;
+  readonly OSV_API_URL: string;
   readonly OSV_BASE_URL: string;
 };
 

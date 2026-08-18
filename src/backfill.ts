@@ -44,7 +44,7 @@ const queryBatchSchema = z.object({
 type BackfillOptions = {
   readonly database: D1Database;
   readonly sbomId: string;
-  readonly osvBaseUrl: string;
+  readonly osvApiUrl: string;
   readonly now?: number;
   readonly budget?: SubrequestBudget;
 };
@@ -75,7 +75,7 @@ export async function backfillSbom(options: BackfillOptions): Promise<void> {
       return;
     }
     options.budget?.take();
-    const response = await fetch(`${options.osvBaseUrl}/v1/querybatch`, {
+    const response = await fetch(`${options.osvApiUrl}/v1/querybatch`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

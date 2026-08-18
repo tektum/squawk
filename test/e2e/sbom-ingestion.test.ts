@@ -72,7 +72,7 @@ describe("SBOM ingestion and historical backfill", () => {
     await backfillSbom({
       database: env.DB,
       sbomId: created.sbomId,
-      osvBaseUrl: "https://osv.test",
+      osvApiUrl: "https://osv.test",
       now: 1,
     });
 
@@ -187,7 +187,7 @@ describe("SBOM ingestion and historical backfill", () => {
     await backfillSbom({
       database: env.DB,
       sbomId: "unmatchable",
-      osvBaseUrl: "https://osv.test",
+      osvApiUrl: "https://osv.test",
       now: 1,
     });
 
@@ -212,7 +212,7 @@ describe("SBOM ingestion and historical backfill", () => {
     await backfillSbom({
       database: env.DB,
       sbomId: "stale",
-      osvBaseUrl: "https://osv.test",
+      osvApiUrl: "https://osv.test",
       now: 1_300_000,
     });
 

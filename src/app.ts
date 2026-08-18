@@ -16,6 +16,7 @@ export type WorkerBindings = {
   readonly GH_APP_ID: string;
   readonly GH_APP_PRIVATE_KEY: string;
   readonly GH_WEBHOOK_SECRET: string;
+  readonly OSV_API_URL: string;
   readonly OSV_BASE_URL: string;
   readonly EXECUTION_CONTEXT: ExecutionContext;
 };

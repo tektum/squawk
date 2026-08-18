@@ -151,6 +151,7 @@ describe("durable multi-platform dispatch", () => {
     await runScheduled(
       {
         ...env,
+        OSV_API_URL: "https://api.osv.test",
         OSV_BASE_URL: "https://osv.test",
         DISPATCH_ENABLED: "false",
         GH_APP_ID: "",

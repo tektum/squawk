@@ -6,6 +6,7 @@ import { syncEcosystem } from "./sync";
 
 type ScheduledEnv = Parameters<typeof dispatchPending>[0] & {
   readonly DISPATCH_ENABLED: string;
+  readonly OSV_API_URL: string;
   readonly OSV_BASE_URL: string;
 };
 
@@ -22,7 +23,7 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
       await backfillSbom({
         database: env.DB,
         sbomId: id,
-        osvBaseUrl: env.OSV_BASE_URL,
+        osvApiUrl: env.OSV_API_URL,
         now,
         budget,
       });

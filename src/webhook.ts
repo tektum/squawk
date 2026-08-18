@@ -49,7 +49,7 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
       .all<{ readonly id: string }>();
     for (const { id } of pending.results)
       env.EXECUTION_CONTEXT.waitUntil(
-        backfillSbom({ database: env.DB, sbomId: id, osvBaseUrl: env.OSV_BASE_URL }),
+        backfillSbom({ database: env.DB, sbomId: id, osvApiUrl: env.OSV_API_URL }),
       );
     return Response.json({ status: existing.status }, { status: 200 });
   }
@@ -88,7 +88,7 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
   if (result.kind === "conflict") throw new WebhookError(409, "conflicting platform submission");
   for (const sbomId of result.createdSbomIds)
     env.EXECUTION_CONTEXT.waitUntil(
-      backfillSbom({ database: env.DB, sbomId, osvBaseUrl: env.OSV_BASE_URL }),
+      backfillSbom({ database: env.DB, sbomId, osvApiUrl: env.OSV_API_URL }),
     );
   await env.DB.prepare(
     "INSERT OR IGNORE INTO github_deliveries (delivery_id,deployment_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at,completed_at) VALUES (?,?,?,?,?,?, 'accepted',?,?)",

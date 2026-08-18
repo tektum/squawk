@@ -2,13 +2,11 @@ import { exportPKCS8, generateKeyPair } from "jose";
 import { HttpResponse, http } from "msw";
 import { respond } from "../http";
 import { server } from "../server";
+import { AMD64_DIGEST, ARM64_DIGEST, INDEX_DIGEST, statement } from "./github-webhook-statement";
 
 export const WEBHOOK_SECRET = "test-webhook-secret";
 export const REPOSITORY_ID = 123;
 export const INSTALLATION_ID = 456;
-export const AMD64_DIGEST = `sha256:${"a".repeat(64)}`;
-export const INDEX_DIGEST = `sha256:${"b".repeat(64)}`;
-export const ARM64_DIGEST = `sha256:${"c".repeat(64)}`;
 
 export type FailureCase =
   | "changed"
@@ -22,7 +20,8 @@ export type FailureCase =
   | "repository"
   | "signature"
   | "subject"
-  | "unattested";
+  | "unattested"
+  | "vulnerable";
 
 type Fixture = {
   readonly bindings: Record<string, unknown>;
@@ -33,69 +32,22 @@ function hex(bytes: ArrayBuffer): string {
   return Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-type StatementOptions = {
-  readonly componentVersion?: string;
-  readonly indexOnly?: boolean;
-  readonly invalidPredicate?: boolean;
-  readonly wrongSubject?: boolean;
-};
-
-function statement(platform: "amd64" | "arm64", digest: string, options: StatementOptions = {}) {
-  const rootId = `SPDXRef-${platform}`;
-  const componentVersion = options.componentVersion ?? "1.5.0";
-  return {
-    _type: "https://in-toto.io/Statement/v0.1",
-    subject: [
-      {
-        name: "ghcr.io/owner/demo",
-        digest: { sha256: (options.wrongSubject ? AMD64_DIGEST : INDEX_DIGEST).slice(7) },
-      },
-    ],
-    predicateType: "https://spdx.dev/Document",
-    predicate: options.invalidPredicate
-      ? { spdxVersion: "SPDX-2.3", packages: [] }
-      : {
-          spdxVersion: "SPDX-2.3",
-          documentDescribes: [rootId],
-          packages: [
-            {
-              SPDXID: rootId,
-              name: `demo-${platform}`,
-              versionInfo: digest,
-              externalRefs: [
-                {
-                  referenceType: "purl",
-                  referenceLocator: options.indexOnly
-                    ? `pkg:oci/demo@${INDEX_DIGEST}?mediaType=application%2Fvnd.oci.image.index.v1%2Bjson`
-                    : `pkg:oci/demo@${digest}?arch=${platform}&os=linux`,
-                },
-              ],
-            },
-            {
-              SPDXID: `SPDXRef-component-${platform}`,
-              name: "demo",
-              versionInfo: componentVersion,
-              externalRefs: [
-                { referenceType: "purl", referenceLocator: `pkg:npm/demo@${componentVersion}` },
-              ],
-            },
-          ],
-        },
-  };
-}
-
 export async function githubWebhookFixture(
   failure?: FailureCase,
   registryStatus = 200,
   packageVersionId = 789,
 ): Promise<Fixture> {
   const appKeys = await generateKeyPair("RS256", { extractable: true });
+  const component =
+    failure === "vulnerable" ? { componentName: "lodash", componentVersion: "4.17.20" } : {};
   const statements = [
     statement("amd64", AMD64_DIGEST, {
+      ...component,
       indexOnly: failure === "index-only",
       wrongSubject: failure === "subject",
     }),
     statement("arm64", ARM64_DIGEST, {
+      ...component,
       ...(failure === "changed" ? { componentVersion: "2.0.0" } : {}),
       indexOnly: failure === "index-only",
       invalidPredicate: failure === "predicate",
@@ -155,6 +107,7 @@ export async function githubWebhookFixture(
         : HttpResponse.json({ error: "unavailable" }, { status: registryStatus }),
     ),
     http.get("https://ghcr.io/v2/owner/demo/manifests/:reference", ({ params }) => {
+      // biome-ignore lint/complexity/useLiteralKeys: params is an index-signature map.
       const reference = String(params["reference"]);
       if (failure === "unattested" && reference === `sha256-${INDEX_DIGEST.slice(7)}`)
         return HttpResponse.json({ error: "not found" }, { status: 404 });
@@ -193,6 +146,7 @@ export async function githubWebhookFixture(
     }),
     http.get("https://ghcr.io/v2/owner/demo/blobs/:digest", ({ params }) => {
       const attestation = attestations.find(
+        // biome-ignore lint/complexity/useLiteralKeys: params is an index-signature map.
         (candidate) => candidate.layerDigest === String(params["digest"]),
       );
       return attestation
@@ -209,15 +163,40 @@ export async function githubWebhookFixture(
   );
   respond({
     method: "POST",
-    url: "https://osv.test/v1/querybatch",
+    url: "https://api.osv.test/v1/querybatch",
     status: 200,
-    body: { results: [] },
+    body:
+      failure === "vulnerable"
+        ? {
+            results: [
+              {
+                vulns: [
+                  {
+                    id: "GHSA-35jh-r3h4-6jhm",
+                    modified: "2026-01-01T00:00:00Z",
+                    affected: [
+                      {
+                        package: { ecosystem: "npm", name: "lodash" },
+                        ranges: [
+                          { type: "SEMVER", events: [{ introduced: "0" }, { fixed: "4.17.21" }] },
+                        ],
+                        versions: [],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }
+        : { results: [] },
   });
   return {
     bindings: {
       GH_APP_ID: "1234",
+      GH_APP_INSTALLATION_ID: String(INSTALLATION_ID),
       GH_APP_PRIVATE_KEY: await exportPKCS8(appKeys.privateKey),
       GH_WEBHOOK_SECRET: WEBHOOK_SECRET,
+      OSV_API_URL: "https://api.osv.test",
       OSV_BASE_URL: "https://osv.test",
       DISPATCH_ENABLED: "false",
     },

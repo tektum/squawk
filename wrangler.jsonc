@@ -16,8 +16,9 @@
   "vars": {
     "DISPATCH_ENABLED": "false",
     "DESCOPE_AUDIENCE": "https://squawk.invalid/audience",
-    "DESCOPE_DISCOVERY_URL": "https://squawk.invalid/.well-known/openid-configuration",
     "DESCOPE_ISSUER": "https://squawk.invalid",
+    "DESCOPE_DISCOVERY_URL": "https://squawk.invalid/.well-known/openid-configuration",
+    "OSV_API_URL": "https://api.osv.dev",
     "OSV_BASE_URL": "https://storage.googleapis.com/osv-vulnerabilities"
   },
   "env": {
