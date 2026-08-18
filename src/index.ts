@@ -1,6 +1,6 @@
+import { advisoryMessageSchema, processAdvisory } from "./advisory";
 import { app } from "./app";
 import { runScheduled } from "./scheduled";
-import { advisoryJobSchema, processAdvisory } from "./sync";
 
 export default {
   fetch(
@@ -17,12 +17,16 @@ export default {
   ): void {
     context.waitUntil(runScheduled(env));
   },
-  async queue(batch: MessageBatch, env: Parameters<typeof runScheduled>[0]): Promise<void> {
+  async queue(
+    batch: MessageBatch,
+    env: Parameters<typeof runScheduled>[0],
+    _context?: ExecutionContext,
+  ): Promise<void> {
     for (const message of batch.messages) {
       try {
         await processAdvisory({
           database: env.DB,
-          job: advisoryJobSchema.parse(message.body),
+          message: advisoryMessageSchema.parse(message.body),
           osvBaseUrl: env.OSV_BASE_URL,
         });
         message.ack();

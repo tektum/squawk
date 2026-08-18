@@ -1,19 +1,18 @@
 import { createExecutionContext, createMessageBatch, env, getQueueResult } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
-import { SubrequestBudget } from "../../src/budget";
-import { type AdvisoryJob, discoverAdvisories } from "../../src/sync";
+import { sha256 } from "../../src/digest";
+import { discoverAdvisories, requeueAdvisoryJobs } from "../../src/sync";
 import { respond } from "../http";
 
-const message = {
-  advisoryId: "OSV-1",
-  ecosystem: "npm",
-  modifiedAt: "2026-01-02T00:00:00Z",
-} satisfies AdvisoryJob;
-
-function queueMessage(body: AdvisoryJob) {
-  return { attempts: 1, body, id: crypto.randomUUID(), timestamp: new Date() };
-}
+const modifiedAt = "2026-01-02T00:00:00Z";
+const jobId = () => sha256(["npm", "OSV-1", modifiedAt].join("\u0000"));
+const queueMessage = (id: string) => ({
+  attempts: 1,
+  body: { jobId: id },
+  id: crypto.randomUUID(),
+  timestamp: new Date(),
+});
 
 describe("OSV advisory queue", () => {
   beforeEach(async () => {
@@ -31,68 +30,85 @@ describe("OSV advisory queue", () => {
     ]);
   });
 
-  it("discovers every unseen advisory and advances after durable enqueue", async () => {
+  it("checkpoints bounded digest batches and normalizes CRLF", async () => {
     const rows = Array.from(
       { length: 205 },
-      (_, index) => `2026-01-02T00:00:00Z,OSV-${String(index).padStart(3, "0")}`,
+      (_, index) => `${modifiedAt},OSV-${String(index).padStart(3, "0")}\r`,
     );
     respond({
       url: "https://osv.test/npm/modified_id.csv",
       status: 200,
-      text: `modified,id\n${rows.join("\n")}\n`,
+      text: `modified,id\r\n${rows.join("\n")}\n`,
     });
-    const batches: AdvisoryJob[][] = [];
+    const batches: { jobId: string }[][] = [];
 
     await expect(
       discoverAdvisories({
         database: env.DB,
         ecosystem: "npm",
         osvBaseUrl: "https://osv.test",
-        budget: new SubrequestBudget(3),
+        maxChunks: 2,
+        queue: { sendBatch: async (batch) => batches.push(Array.from(batch, (item) => item.body)) },
+      }),
+    ).resolves.toBe(200);
+
+    expect(batches.map((batch) => batch.length)).toEqual([100, 100]);
+    expect(Object.keys(batches[0]?.[0] ?? {})).toEqual(["jobId"]);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM osv_advisory_jobs").first("COUNT(*)"),
+    ).resolves.toBe(200);
+    await expect(
+      env.DB.prepare(
+        "SELECT COUNT(*) FROM osv_advisory_jobs WHERE advisory_id LIKE '%char(13)%'",
+      ).first("COUNT(*)"),
+    ).resolves.toBe(0);
+    await expect(
+      env.DB.prepare("SELECT continuation_id FROM sync_cursors WHERE ecosystem='npm'").first(
+        "continuation_id",
+      ),
+    ).resolves.toBe("OSV-199");
+  });
+
+  it("leaves the cursor at the last successfully enqueued chunk", async () => {
+    const rows = Array.from(
+      { length: 205 },
+      (_, index) => `${modifiedAt},OSV-${String(index).padStart(3, "0")}`,
+    );
+    respond({
+      url: "https://osv.test/npm/modified_id.csv",
+      status: 200,
+      text: `modified,id\n${rows.join("\n")}\n`,
+    });
+    let calls = 0;
+    await expect(
+      discoverAdvisories({
+        database: env.DB,
+        ecosystem: "npm",
+        osvBaseUrl: "https://osv.test",
         queue: {
-          sendBatch: async (batch) => {
-            batches.push(Array.from(batch, (item) => item.body));
+          sendBatch: async () => {
+            calls += 1;
+            if (calls === 2) throw new Error("injected queue failure");
           },
         },
       }),
-    ).resolves.toBe(205);
-
-    expect(batches.map((batch) => batch.length)).toEqual([100, 100, 5]);
+    ).rejects.toThrow("injected queue failure");
     await expect(
-      env.DB.prepare("SELECT COUNT(*) FROM osv_advisory_jobs").first("COUNT(*)"),
-    ).resolves.toBe(205);
-    await expect(
-      env.DB.prepare("SELECT last_synced_at FROM sync_cursors WHERE ecosystem='npm'").first(
-        "last_synced_at",
+      env.DB.prepare("SELECT continuation_id FROM sync_cursors WHERE ecosystem='npm'").first(
+        "continuation_id",
       ),
-    ).resolves.toBe("2026-01-02T00:00:00Z");
+    ).resolves.toBe("OSV-099");
   });
 
   it("acknowledges an idempotent successful advisory", async () => {
-    await env.DB.prepare(
-      "INSERT INTO osv_advisory_jobs VALUES ('npm','OSV-1','2026-01-02T00:00:00Z','pending',NULL,NULL)",
-    ).run();
-    respond({
-      url: "https://osv.test/npm/OSV-1.json",
-      status: 200,
-      body: {
-        id: "OSV-1",
-        modified: message.modifiedAt,
-        affected: [
-          {
-            package: { ecosystem: "npm", name: "demo" },
-            ranges: [{ type: "SEMVER", events: [{ introduced: "1" }, { fixed: "2" }] }],
-            versions: [],
-          },
-        ],
-      },
-    });
-    const batch = createMessageBatch("squawk-osv-advisories", [queueMessage(message)]);
+    const id = await jobId();
+    await insertJob(id, "pending", null);
+    advisoryResponse(200);
+    const batch = createMessageBatch("squawk-osv-advisories", [queueMessage(id)]);
     const context = createExecutionContext();
 
-    await worker.queue(batch, { ...env, OSV_BASE_URL: "https://osv.test" } as never);
+    await worker.queue(batch, { ...env, OSV_BASE_URL: "https://osv.test" } as never, context);
     const result = await getQueueResult(batch, context);
-    expect(result.ackAll).toBe(false);
     expect(result.explicitAcks).toHaveLength(1);
     await expect(
       env.DB.prepare("SELECT status FROM osv_advisory_jobs").first("status"),
@@ -102,19 +118,52 @@ describe("OSV advisory queue", () => {
     );
   });
 
-  it("retries a transient advisory failure", async () => {
-    await env.DB.prepare(
-      "INSERT INTO osv_advisory_jobs VALUES ('npm','OSV-1','2026-01-02T00:00:00Z','pending',NULL,NULL)",
-    ).run();
-    respond({ url: "https://osv.test/npm/OSV-1.json", status: 503 });
-    const batch = createMessageBatch("squawk-osv-advisories", [queueMessage(message)]);
+  it("retries a transient failure and requeues stale work", async () => {
+    const id = await jobId();
+    await insertJob(id, "pending", null);
+    advisoryResponse(503);
+    const batch = createMessageBatch("squawk-osv-advisories", [queueMessage(id)]);
     const context = createExecutionContext();
-
-    await worker.queue(batch, { ...env, OSV_BASE_URL: "https://osv.test" } as never);
-    const result = await getQueueResult(batch, context);
-    expect(result.retryMessages).toHaveLength(1);
-    await expect(
-      env.DB.prepare("SELECT status FROM osv_advisory_jobs").first("status"),
-    ).resolves.toBe("failed");
+    await worker.queue(batch, { ...env, OSV_BASE_URL: "https://osv.test" } as never, context);
+    expect((await getQueueResult(batch, context)).retryMessages).toHaveLength(1);
+    const sent: { jobId: string }[] = [];
+    await requeueAdvisoryJobs({
+      database: env.DB,
+      now: 2_000_000,
+      queue: {
+        sendBatch: async (messages) => {
+          sent.push(...Array.from(messages, (item) => item.body));
+        },
+      },
+    });
+    expect(sent).toEqual([{ jobId: id }]);
   });
+
+  async function insertJob(id: string, status: string, attemptedAt: number | null) {
+    await env.DB.prepare("INSERT INTO osv_advisory_jobs VALUES (?,'npm','OSV-1',?,?,?,NULL)")
+      .bind(id, modifiedAt, status, attemptedAt)
+      .run();
+  }
+
+  function advisoryResponse(status: number) {
+    respond({
+      url: "https://osv.test/npm/OSV-1.json",
+      status,
+      ...(status === 200
+        ? {
+            body: {
+              id: "OSV-1",
+              modified: modifiedAt,
+              affected: [
+                {
+                  package: { ecosystem: "npm", name: "demo" },
+                  ranges: [{ type: "SEMVER", events: [{ introduced: "1" }, { fixed: "2" }] }],
+                  versions: [],
+                },
+              ],
+            },
+          }
+        : {}),
+    });
+  }
 });

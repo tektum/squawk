@@ -2,7 +2,7 @@ import { z } from "zod";
 import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
 import { SubrequestBudget } from "./budget";
 import { dispatchPending } from "./dispatch";
-import { discoverAdvisories } from "./sync";
+import { discoverAdvisories, requeueAdvisoryJobs } from "./sync";
 
 type ScheduledEnv = Parameters<typeof dispatchPending>[0] & {
   readonly DISPATCH_ENABLED: string;
@@ -82,7 +82,6 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
           ecosystem,
           osvBaseUrl: env.OSV_BASE_URL,
           queue: env.OSV_ADVISORY_JOBS,
-          budget,
         });
       } catch (error) {
         if (!(error instanceof Error)) throw error;
@@ -90,6 +89,11 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
       }
     }
   }
+  await requeueAdvisoryJobs({
+    database: env.DB,
+    queue: env.OSV_ADVISORY_JOBS,
+    now,
+  });
   if (env.DISPATCH_ENABLED === "true" && budget.remaining > 1)
     await dispatchPending(env, now, budget);
 }

@@ -22,8 +22,8 @@ bun scripts/seed-github-source.ts squawk-staging \
 5. Publish a known public GHCR image from protected `main`. Confirm one accepted
    `github_deliveries` row and one complete `sboms` row per platform. Confirm a
    replay returns success without adding rows.
-6. Exercise human findings, VEX, and SBOM retirement with a hosted Descope session.
-7. Enable outbound finding dispatch only after the cross-repository receipt passes.
+6. Exercise human findings, VEX, SBOM retirement, and one cross-repository dispatch
+   receipt with a hosted Descope session.
 
 GitHub 5xx/rate-limit failures return a retryable webhook response and create no
 delivery receipt. Inspect inbound state with
