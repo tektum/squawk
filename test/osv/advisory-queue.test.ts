@@ -59,7 +59,7 @@ describe("OSV advisory queue", () => {
     ).resolves.toBe(200);
     await expect(
       env.DB.prepare(
-        "SELECT COUNT(*) FROM osv_advisory_jobs WHERE advisory_id LIKE '%char(13)%'",
+        "SELECT COUNT(*) FROM osv_advisory_jobs WHERE instr(advisory_id, char(13))>0",
       ).first("COUNT(*)"),
     ).resolves.toBe(0);
     await expect(
