@@ -13,8 +13,22 @@
     }
   ],
   "triggers": { "crons": ["0 */4 * * *"] },
+  "queues": {
+    "producers": [{ "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-osv-advisories" }],
+    "consumers": [
+      {
+        "queue": "squawk-osv-advisories",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "retry_delay": 60,
+        "dead_letter_queue": "squawk-osv-advisories-dlq",
+        "max_concurrency": 10
+      }
+    ]
+  },
   "vars": {
-    "DISPATCH_ENABLED": "false",
+    "DISPATCH_ENABLED": "true",
     "DESCOPE_AUDIENCE": "https://squawk.invalid/audience",
     "DESCOPE_ISSUER": "https://squawk.invalid",
     "DESCOPE_DISCOVERY_URL": "https://squawk.invalid/.well-known/openid-configuration",
@@ -22,7 +36,43 @@
     "OSV_BASE_URL": "https://storage.googleapis.com/osv-vulnerabilities"
   },
   "env": {
-    "staging": { "name": "squawk-staging", "vars": { "DISPATCH_ENABLED": "false" } },
-    "production": { "name": "squawk-production", "vars": { "DISPATCH_ENABLED": "false" } }
+    "staging": {
+      "name": "squawk-staging",
+      "vars": { "DISPATCH_ENABLED": "true" },
+      "queues": {
+        "producers": [{ "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-staging-osv-advisories" }],
+        "consumers": [
+          {
+            "queue": "squawk-staging-osv-advisories",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 3,
+            "retry_delay": 60,
+            "dead_letter_queue": "squawk-staging-osv-advisories-dlq",
+            "max_concurrency": 10
+          }
+        ]
+      }
+    },
+    "production": {
+      "name": "squawk-production",
+      "vars": { "DISPATCH_ENABLED": "true" },
+      "queues": {
+        "producers": [
+          { "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-production-osv-advisories" }
+        ],
+        "consumers": [
+          {
+            "queue": "squawk-production-osv-advisories",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 3,
+            "retry_delay": 60,
+            "dead_letter_queue": "squawk-production-osv-advisories-dlq",
+            "max_concurrency": 10
+          }
+        ]
+      }
+    }
   }
 }

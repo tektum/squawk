@@ -1,7 +1,7 @@
 # Infrastructure
 
-OpenTofu provisions the Cloudflare D1 database, Worker, deployment, and cron schedule.
-The module intentionally starts with `DISPATCH_ENABLED=false`.
+OpenTofu provisions the Cloudflare D1 database, advisory queue and dead-letter queue,
+Worker deployment, queue consumer, and cron schedule. Outbound dispatch is enabled by default.
 
 ## Commands
 

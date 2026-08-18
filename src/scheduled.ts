@@ -2,12 +2,13 @@ import { z } from "zod";
 import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
 import { SubrequestBudget } from "./budget";
 import { dispatchPending } from "./dispatch";
-import { syncEcosystem } from "./sync";
+import { discoverAdvisories } from "./sync";
 
 type ScheduledEnv = Parameters<typeof dispatchPending>[0] & {
   readonly DISPATCH_ENABLED: string;
   readonly OSV_API_URL: string;
   readonly OSV_BASE_URL: string;
+  readonly OSV_ADVISORY_JOBS: Queue;
 };
 
 export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise<void> {
@@ -74,21 +75,18 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
         )
           .bind(ecosystem, new Date(now).toISOString())
           .run();
-    } else {
-      if (budget.remaining > 3) {
-        try {
-          await syncEcosystem({
-            database: env.DB,
-            ecosystem,
-            osvBaseUrl: env.OSV_BASE_URL,
-            budget,
-            maxAdvisories: 1,
-            now,
-          });
-        } catch (error) {
-          if (!(error instanceof Error)) throw error;
-          console.error("Scheduled OSV sync failed", { ecosystem, error });
-        }
+    } else if (budget.remaining > 3) {
+      try {
+        await discoverAdvisories({
+          database: env.DB,
+          ecosystem,
+          osvBaseUrl: env.OSV_BASE_URL,
+          queue: env.OSV_ADVISORY_JOBS,
+          budget,
+        });
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        console.error("Scheduled OSV discovery failed", { ecosystem, error });
       }
     }
   }

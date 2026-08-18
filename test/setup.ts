@@ -9,6 +9,7 @@ afterAll(() => server.close());
 beforeEach(async () => {
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
   await env.DB.batch([
+    env.DB.prepare("DELETE FROM osv_advisory_jobs"),
     env.DB.prepare("DELETE FROM matching_errors"),
     env.DB.prepare("DELETE FROM findings"),
     env.DB.prepare("DELETE FROM vex_statements"),

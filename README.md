@@ -57,9 +57,10 @@ golangci-lint v2, govulncheck, and module verification.
 
 ## Deployment and secrets
 
-`Deploy Squawk` provisions D1, applies D1 migrations, then deploys dark
-(`DISPATCH_ENABLED=false`) before injecting GitHub App and `GH_WEBHOOK_SECRET`
-through `wrangler secret put`. Store Cloudflare, human Descope, and GitHub App values in
+`Deploy Squawk` provisions D1, applies D1 migrations, deploys the advisory queue
+consumer, and enables outbound finding dispatch by default. Set
+`DISPATCH_ENABLED=false` for incident rollback. Store Cloudflare, human Descope,
+and GitHub App values in
 GitHub secrets or Cloudflare secrets only; never put them in `devbox.json`,
 OpenTofu variables, or repository files. See [the rollout runbook](docs/runbook.md)
 for the ordered deployment and rollback procedure.

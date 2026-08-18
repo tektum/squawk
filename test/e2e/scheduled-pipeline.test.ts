@@ -153,6 +153,7 @@ describe("durable multi-platform dispatch", () => {
         ...env,
         OSV_API_URL: "https://api.osv.test",
         OSV_BASE_URL: "https://osv.test",
+        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
         DISPATCH_ENABLED: "false",
         GH_APP_ID: "",
         GH_APP_INSTALLATION_ID: "",
@@ -172,7 +173,7 @@ describe("durable multi-platform dispatch", () => {
       ),
     ).resolves.toBe("2026-01-01T00:00:00Z");
     expect(error).toHaveBeenCalledWith(
-      "Scheduled OSV sync failed",
+      "Scheduled OSV discovery failed",
       expect.objectContaining({ ecosystem: "npm" }),
     );
     error.mockRestore();
