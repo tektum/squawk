@@ -12,11 +12,12 @@ const desired = {
     name: "Squawk tenant-1",
     description: "Human data management application",
     permissionsScopes: [
+      { name: "operations.run", description: "Run scheduled operations" },
       { name: "sbom.manage", description: "Manage stored SBOM data" },
       { name: "findings.read", description: "Read findings" },
       { name: "vex.write", description: "Write VEX statements" },
     ],
-    humanGrant: { permissions: ["sbom.manage", "findings.read", "vex.write"] },
+    humanGrant: { permissions: ["operations.run", "sbom.manage", "findings.read", "vex.write"] },
   },
 };
 

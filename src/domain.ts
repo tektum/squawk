@@ -7,7 +7,12 @@ export type TenantId = z.infer<typeof TenantIdSchema>;
 export type UserId = z.infer<typeof UserIdSchema>;
 export type SbomId = z.infer<typeof SbomIdSchema>;
 
-export const capabilityValues = ["sbom.manage", "findings.read", "vex.write"] as const;
+export const capabilityValues = [
+  "operations.run",
+  "sbom.manage",
+  "findings.read",
+  "vex.write",
+] as const;
 export const CapabilitySchema = z.enum(capabilityValues);
 export type Capability = z.infer<typeof CapabilitySchema>;
 
