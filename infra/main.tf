@@ -55,7 +55,7 @@ variable "osv_api_url" {
 }
 variable "dispatch_enabled" {
   type    = bool
-  default = false
+  default = true
 }
 
 locals {
@@ -63,6 +63,8 @@ locals {
   descope_enabled       = var.descope_project_id != "" && var.descope_tenant_id != "" && var.descope_audience != ""
   descope_issuer        = coalesce(var.descope_issuer, "https://squawk.invalid")
   descope_discovery_url = coalesce(var.descope_discovery_url, "https://squawk.invalid/.well-known/openid-configuration")
+  advisory_queue_name   = "${local.worker_name}-osv-advisories"
+  advisory_dlq_name     = "${local.worker_name}-osv-advisories-dlq"
   descope_audience      = var.descope_audience
   worker_modules = concat(
     [{ name = basename(var.worker_bundle_path), content_file = var.worker_bundle_path, content_type = "application/javascript+module" }],
@@ -79,7 +81,8 @@ locals {
     { name = "DESCOPE_DISCOVERY_URL", type = "plain_text", text = local.descope_discovery_url },
     { name = "DESCOPE_ISSUER", type = "plain_text", text = local.descope_issuer },
     { name = "OSV_API_URL", type = "plain_text", text = var.osv_api_url },
-    { name = "OSV_BASE_URL", type = "plain_text", text = var.osv_base_url }
+    { name = "OSV_BASE_URL", type = "plain_text", text = var.osv_base_url },
+    { name = "OSV_ADVISORY_JOBS", type = "queue", queue_name = cloudflare_queue.osv_advisories.queue_name }
   ])
 }
 
@@ -89,6 +92,16 @@ resource "cloudflare_d1_database" "squawk" {
   read_replication = {
     mode = "disabled"
   }
+}
+
+resource "cloudflare_queue" "osv_advisories" {
+  account_id = var.cloudflare_account_id
+  queue_name = local.advisory_queue_name
+}
+
+resource "cloudflare_queue" "osv_advisories_dlq" {
+  account_id = var.cloudflare_account_id
+  queue_name = local.advisory_dlq_name
 }
 
 resource "terraform_data" "descope" {
@@ -152,6 +165,22 @@ resource "cloudflare_workers_deployment" "squawk" {
   }]
 }
 
+resource "cloudflare_queue_consumer" "osv_advisories" {
+  account_id        = var.cloudflare_account_id
+  queue_id          = cloudflare_queue.osv_advisories.id
+  script_name       = cloudflare_worker.squawk.name
+  type              = "worker"
+  dead_letter_queue = cloudflare_queue.osv_advisories_dlq.queue_name
+  settings = {
+    batch_size       = 10
+    max_concurrency  = 10
+    max_retries      = 3
+    max_wait_time_ms = 5000
+    retry_delay      = 60
+  }
+  depends_on = [cloudflare_workers_deployment.squawk]
+}
+
 resource "cloudflare_workers_cron_trigger" "squawk" {
   account_id  = var.cloudflare_account_id
   script_name = cloudflare_worker.squawk.name
@@ -167,6 +196,7 @@ output "worker_configuration" {
     d1_binding       = "DB"
     cron             = "0 */4 * * *"
     observability    = true
+    advisory_queue   = cloudflare_queue.osv_advisories.queue_name
     dispatch_enabled = var.dispatch_enabled
   }
 }

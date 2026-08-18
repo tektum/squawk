@@ -7,9 +7,9 @@
 2. Add the same random webhook value to the App and the deployment environment as
    `GH_WEBHOOK_SECRET`. Keep `GH_APP_ID`, `GH_APP_INSTALLATION_ID`, and
    `GH_APP_PRIVATE_KEY` in Worker/GitHub secrets only.
-3. Build the Worker, apply `cloudflare_d1_database.squawk`, apply all D1
-   migrations, then apply the remaining infrastructure dark with
-   `DISPATCH_ENABLED=false`.
+3. Build the Worker, apply `cloudflare_d1_database.squawk` and both queue resources,
+   apply all D1 migrations, then apply the remaining infrastructure with
+   `DISPATCH_ENABLED=true`. Use `false` only for investigation or rollback.
 `OSV_BASE_URL` must remain the OSV static-feed bucket and `OSV_API_URL` must point to
 the OSV query API. Do not use the static-feed URL for `/v1/querybatch`.
 4. Seed the immutable source mapping until a management UI exists:
@@ -22,8 +22,8 @@ bun scripts/seed-github-source.ts squawk-staging \
 5. Publish a known public GHCR image from protected `main`. Confirm one accepted
    `github_deliveries` row and one complete `sboms` row per platform. Confirm a
    replay returns success without adding rows.
-6. Exercise human findings, VEX, and SBOM retirement with a hosted Descope session.
-7. Enable outbound finding dispatch only after the cross-repository receipt passes.
+6. Exercise human findings, VEX, SBOM retirement, and one cross-repository dispatch
+   receipt with a hosted Descope session.
 
 GitHub 5xx/rate-limit failures return a retryable webhook response and create no
 delivery receipt. Inspect inbound state with

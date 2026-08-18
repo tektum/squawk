@@ -1,54 +1,28 @@
 import { z } from "zod";
-import type { SubrequestBudget } from "./budget";
-import { compareVersion } from "./osv/comparator";
+import type { AdvisoryMessage } from "./advisory";
+import { sha256 } from "./digest";
 
-const advisorySchema = z.object({
-  id: z.string(),
-  modified: z.string(),
-  summary: z.string().optional(),
-  severity: z.array(z.object({ score: z.string() })).optional(),
-  affected: z.array(
-    z.object({
-      package: z.object({ ecosystem: z.string(), name: z.string() }),
-      ranges: z
-        .array(
-          z.object({
-            type: z.string(),
-            events: z.array(
-              z.object({
-                introduced: z.string().optional(),
-                fixed: z.string().optional(),
-                last_affected: z.string().optional(),
-                limit: z.string().optional(),
-              }),
-            ),
-          }),
-        )
-        .default([]),
-      versions: z.array(z.string()).default([]),
-    }),
-  ),
-});
 const cursorSchema = z.object({ last_synced_at: z.string(), boundary_ids: z.string() });
-const componentSchema = z.object({ id: z.number(), org_id: z.string(), version: z.string() });
+const feedRowSchema = z.object({ modified: z.string().datetime(), id: z.string().min(1) });
+type QueueSender = {
+  sendBatch(messages: Iterable<MessageSendRequest<AdvisoryMessage>>): Promise<unknown>;
+};
 
-type SyncOptions = {
+export type DiscoveryOptions = {
   readonly database: D1Database;
   readonly ecosystem: string;
   readonly osvBaseUrl: string;
-  readonly budget: SubrequestBudget;
-  readonly maxAdvisories?: number;
-  readonly now?: number;
+  readonly queue: QueueSender;
+  readonly maxChunks?: number;
 };
 
-export async function syncEcosystem(options: SyncOptions): Promise<number> {
-  const cursorRow = await options.database
+export async function discoverAdvisories(options: DiscoveryOptions): Promise<number> {
+  const rawCursor = await options.database
     .prepare("SELECT last_synced_at,boundary_ids FROM sync_cursors WHERE ecosystem=?")
     .bind(options.ecosystem)
     .first();
-  if (!cursorRow) return 0;
-  const cursor = cursorSchema.parse(cursorRow);
-  options.budget.take();
+  if (!rawCursor) return 0;
+  const cursor = cursorSchema.parse(rawCursor);
   const response = await fetch(
     `${options.osvBaseUrl}/${encodeURIComponent(options.ecosystem)}/modified_id.csv`,
     { signal: AbortSignal.timeout(10_000) },
@@ -61,9 +35,7 @@ export async function syncEcosystem(options: SyncOptions): Promise<number> {
     .slice(1)
     .map((line) => {
       const [modified, id] = line.split(",");
-      return z
-        .object({ modified: z.string().datetime(), id: z.string().min(1) })
-        .parse({ modified, id });
+      return feedRowSchema.parse({ modified: modified?.trim(), id: id?.trim() });
     })
     .filter(
       (row) =>
@@ -73,89 +45,71 @@ export async function syncEcosystem(options: SyncOptions): Promise<number> {
     .sort(
       (left, right) =>
         left.modified.localeCompare(right.modified) || left.id.localeCompare(right.id),
-    )
-    .slice(
-      0,
-      Math.min(options.maxAdvisories ?? options.budget.remaining, options.budget.remaining),
     );
-  let cursorTimestamp = cursor.last_synced_at;
-  let cursorBoundary = boundary;
-  for (const row of rows) {
-    options.budget.take();
-    const advisoryResponse = await fetch(
-      `${options.osvBaseUrl}/${encodeURIComponent(options.ecosystem)}/${encodeURIComponent(row.id)}.json`,
-      { signal: AbortSignal.timeout(10_000) },
+  const maxRows = (options.maxChunks ?? 10) * 100;
+  const selected = rows.slice(0, maxRows);
+  for (let offset = 0; offset < selected.length; offset += 100) {
+    const chunk = selected.slice(offset, offset + 100);
+    const messages = await Promise.all(
+      chunk.map(async (row) => {
+        const jobId = await sha256([options.ecosystem, row.id, row.modified].join("\u0000"));
+        return { jobId, row };
+      }),
     );
-    if (!advisoryResponse.ok) throw new Error(`OSV advisory failed (${advisoryResponse.status})`);
-    const advisory = advisorySchema.parse(await advisoryResponse.json());
-    const statements: D1PreparedStatement[] = [];
-    for (const affected of advisory.affected.filter(
-      (entry) => entry.package.ecosystem.split(":")[0] === options.ecosystem,
-    )) {
-      const components = (
-        await options.database
-          .prepare(
-            "SELECT c.id,s.org_id,c.version FROM components c JOIN sboms s ON s.id=c.sbom_id AND s.retired_at IS NULL WHERE c.matchable=1 AND c.package_name=? AND (c.ecosystem=? OR c.ecosystem LIKE ?)",
-          )
-          .bind(affected.package.name, options.ecosystem, `${options.ecosystem}:%`)
-          .all()
-      ).results.map((component) => componentSchema.parse(component));
-      if (components.length === 0) continue;
-      statements.push(
+    await options.database.batch(
+      messages.map(({ jobId, row }) =>
         options.database
           .prepare(
-            "INSERT INTO vulnerabilities (id,ecosystem,package_name,affected_ranges,severity,summary,modified_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id,ecosystem,package_name) DO UPDATE SET affected_ranges=excluded.affected_ranges,severity=excluded.severity,summary=excluded.summary,modified_at=excluded.modified_at",
+            "INSERT INTO osv_advisory_jobs (job_id,ecosystem,advisory_id,modified_at,status) VALUES (?,?,?,?,'pending') ON CONFLICT(ecosystem,advisory_id) DO UPDATE SET job_id=excluded.job_id,modified_at=excluded.modified_at,status=CASE WHEN excluded.modified_at>osv_advisory_jobs.modified_at THEN 'pending' ELSE osv_advisory_jobs.status END,error=CASE WHEN excluded.modified_at>osv_advisory_jobs.modified_at THEN NULL ELSE osv_advisory_jobs.error END",
           )
-          .bind(
-            advisory.id,
-            options.ecosystem,
-            affected.package.name,
-            JSON.stringify({ ranges: affected.ranges, versions: affected.versions }),
-            advisory.severity?.[0]?.score ?? null,
-            advisory.summary ?? null,
-            advisory.modified,
-          ),
-      );
-      for (const component of components) {
-        const comparison = await compareVersion({
-          ecosystem: options.ecosystem,
-          version: component.version,
-          ranges: affected.ranges,
-          versions: affected.versions,
-        });
-        if (comparison.kind === "match")
-          statements.push(
-            options.database
-              .prepare("INSERT OR IGNORE INTO findings VALUES (?,?,?,?,NULL)")
-              .bind(component.org_id, component.id, advisory.id, options.now ?? Date.now()),
-          );
-        if (comparison.kind === "unsupported" || comparison.kind === "error")
-          statements.push(
-            options.database
-              .prepare(
-                "INSERT INTO matching_errors (component_id,vuln_id,reason,created_at) VALUES (?,?,?,?) ON CONFLICT(component_id,vuln_id) DO UPDATE SET reason=excluded.reason,created_at=excluded.created_at",
-              )
-              .bind(component.id, advisory.id, comparison.reason, options.now ?? Date.now()),
-          );
-      }
-    }
-    const nextBoundary =
-      row.modified === cursorTimestamp ? new Set([...cursorBoundary, row.id]) : new Set([row.id]);
-    statements.push(
-      options.database
-        .prepare(
-          "UPDATE sync_cursors SET last_synced_at=?,boundary_ids=?,continuation_id=? WHERE ecosystem=?",
-        )
-        .bind(
-          row.modified,
-          [...nextBoundary].sort().join(","),
-          rows.at(-1)?.id === row.id ? null : row.id,
-          options.ecosystem,
-        ),
+          .bind(jobId, options.ecosystem, row.id, row.modified),
+      ),
     );
-    await options.database.batch(statements);
-    cursorTimestamp = row.modified;
-    cursorBoundary = nextBoundary;
+    await options.queue.sendBatch(messages.map(({ jobId }) => ({ body: { jobId } })));
+    await checkpoint(options.database, options.ecosystem, cursor, rows, offset + chunk.length);
   }
-  return rows.length;
+  return selected.length;
+}
+async function checkpoint(
+  database: D1Database,
+  ecosystem: string,
+  initial: z.infer<typeof cursorSchema>,
+  rows: readonly z.infer<typeof feedRowSchema>[],
+  count: number,
+): Promise<void> {
+  const last = rows[count - 1];
+  if (!last) return;
+  const priorBoundary =
+    last.modified === initial.last_synced_at ? initial.boundary_ids.split(",").filter(Boolean) : [];
+  const ids = [
+    ...priorBoundary,
+    ...rows
+      .slice(0, count)
+      .filter((row) => row.modified === last.modified)
+      .map((row) => row.id),
+  ].sort();
+  await database
+    .prepare(
+      "UPDATE sync_cursors SET last_synced_at=?,boundary_ids=?,continuation_id=? WHERE ecosystem=?",
+    )
+    .bind(last.modified, [...new Set(ids)].join(","), rows[count] ? last.id : null, ecosystem)
+    .run();
+}
+
+export async function requeueAdvisoryJobs(options: {
+  readonly database: D1Database;
+  readonly queue: QueueSender;
+  readonly now?: number;
+  readonly limit?: number;
+}): Promise<number> {
+  const now = options.now ?? Date.now();
+  const rows = await options.database
+    .prepare(
+      "SELECT job_id FROM osv_advisory_jobs WHERE status IN ('pending','failed') OR (status='running' AND COALESCE(attempted_at,0)<?) ORDER BY modified_at LIMIT ?",
+    )
+    .bind(now - 20 * 60_000, options.limit ?? 100)
+    .all<{ readonly job_id: string }>();
+  if (rows.results.length > 0)
+    await options.queue.sendBatch(rows.results.map((row) => ({ body: { jobId: row.job_id } })));
+  return rows.results.length;
 }

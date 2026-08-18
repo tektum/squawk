@@ -5,7 +5,7 @@ import { CapabilitySchema, SbomIdSchema, TenantIdSchema, UserIdSchema } from "..
 import { compareVersion } from "../../src/osv/comparator";
 import { appendVex, listFindings, retireSbom } from "../../src/repository";
 import { parsePredicate, sbomInputSchema } from "../../src/sbom";
-import { syncEcosystem } from "../../src/sync";
+import { discoverAdvisories } from "../../src/sync";
 import { respond } from "../http";
 
 type AcceptanceCase = readonly [id: string, assertion: () => void | Promise<void>];
@@ -169,23 +169,20 @@ const cases: readonly AcceptanceCase[] = [
         status: 200,
         text: "modified,id\n2026-01-02T00:00:00Z,OSV-empty\n",
       });
-      respond({
-        url: "https://osv.test/empty/OSV-empty.json",
-        status: 200,
-        body: {
-          id: "OSV-empty",
-          modified: "2026-01-02T00:00:00Z",
-          affected: [{ package: { ecosystem: "empty", name: "absent" }, ranges: [], versions: [] }],
-        },
-      });
+      const messages: unknown[] = [];
       expect(
-        await syncEcosystem({
+        await discoverAdvisories({
           database: env.DB,
           ecosystem: "empty",
           osvBaseUrl: "https://osv.test",
-          budget: new SubrequestBudget(2),
+          queue: {
+            sendBatch: async (batch) => {
+              messages.push(...Array.from(batch));
+            },
+          },
         }),
       ).toBe(1);
+      expect(messages).toHaveLength(1);
     },
   ],
   [

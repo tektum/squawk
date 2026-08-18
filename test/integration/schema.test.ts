@@ -15,6 +15,7 @@ describe("D1 migration contract", () => {
       "vex_statements",
       "sync_cursors",
       "osv_ecosystems",
+      "osv_advisory_jobs",
       "matching_errors",
       "dispatch_deliveries",
       "github_sources",

@@ -1,20 +1,8 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { SubrequestBudget } from "../../src/budget";
-import { syncEcosystem } from "../../src/sync";
+import type { AdvisoryMessage } from "../../src/advisory";
+import { discoverAdvisories } from "../../src/sync";
 import { respond } from "../http";
-
-const relevant = (id: string) => ({
-  id,
-  modified: "2026-01-02T00:00:00Z",
-  affected: [
-    {
-      package: { ecosystem: "npm", name: "demo" },
-      ranges: [{ type: "SEMVER", events: [{ introduced: "1.0.0" }, { fixed: "2.0.0" }] }],
-      versions: [],
-    },
-  ],
-});
 
 describe("incremental OSV synchronization", () => {
   beforeEach(async () => {
@@ -36,46 +24,30 @@ describe("incremental OSV synchronization", () => {
     ]);
   });
 
-  it("resumes equal-timestamp work without skipping records", async () => {
+  it("discovers equal-timestamp work without skipping records", async () => {
     const csv =
       "modified,id\n2026-01-01T01:00:00Z,OSV-1\n2026-01-02T00:00:00Z,OSV-2\n2026-01-02T00:00:00Z,OSV-3\n";
     respond({ url: "https://osv.test/npm/modified_id.csv", status: 200, text: csv });
-    respond({ url: "https://osv.test/npm/OSV-1.json", status: 200, body: relevant("OSV-1") });
-    respond({
-      url: "https://osv.test/npm/OSV-2.json",
-      status: 200,
-      body: {
-        id: "OSV-2",
-        modified: "2026-01-02T00:00:00Z",
-        affected: [{ package: { ecosystem: "npm", name: "absent" }, ranges: [], versions: [] }],
-      },
-    });
-    expect(
-      await syncEcosystem({
-        database: env.DB,
-        ecosystem: "npm",
-        osvBaseUrl: "https://osv.test",
-        budget: new SubrequestBudget(3),
-        now: 1,
-      }),
-    ).toBe(2);
-    expect(
-      await env.DB.prepare("SELECT COUNT(*) AS count FROM findings").first<number>("count"),
-    ).toBe(1);
+    const messages: AdvisoryMessage[] = [];
 
-    respond({ url: "https://osv.test/npm/modified_id.csv", status: 200, text: csv });
-    respond({ url: "https://osv.test/npm/OSV-3.json", status: 200, body: relevant("OSV-3") });
-    expect(
-      await syncEcosystem({
+    await expect(
+      discoverAdvisories({
         database: env.DB,
         ecosystem: "npm",
         osvBaseUrl: "https://osv.test",
-        budget: new SubrequestBudget(3),
-        now: 2,
+        queue: {
+          sendBatch: async (batch) => {
+            for (const item of batch) messages.push(item.body);
+          },
+        },
       }),
-    ).toBe(1);
-    expect(
-      await env.DB.prepare("SELECT COUNT(*) AS count FROM findings").first<number>("count"),
-    ).toBe(2);
+    ).resolves.toBe(3);
+
+    expect(messages).toHaveLength(3);
+    await expect(
+      env.DB.prepare("SELECT boundary_ids FROM sync_cursors WHERE ecosystem='npm'").first(
+        "boundary_ids",
+      ),
+    ).resolves.toBe("OSV-2,OSV-3");
   });
 });

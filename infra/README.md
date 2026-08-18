@@ -1,7 +1,7 @@
 # Infrastructure
 
-OpenTofu provisions the Cloudflare D1 database, Worker, deployment, and cron schedule.
-The module intentionally starts with `DISPATCH_ENABLED=false`.
+OpenTofu provisions the Cloudflare D1 database, advisory queue and dead-letter queue,
+Worker deployment, queue consumer, and cron schedule. Outbound dispatch is enabled by default.
 
 ## Commands
 
@@ -42,6 +42,9 @@ No modules.
 | Name | Type |
 | ---- | ---- |
 | [cloudflare_d1_database.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/d1_database) | resource |
+| [cloudflare_queue.osv_advisories](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue) | resource |
+| [cloudflare_queue.osv_advisories_dlq](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue) | resource |
+| [cloudflare_queue_consumer.osv_advisories](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue_consumer) | resource |
 | [cloudflare_worker.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/worker) | resource |
 | [cloudflare_worker_version.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/worker_version) | resource |
 | [cloudflare_workers_cron_trigger.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/workers_cron_trigger) | resource |
@@ -58,7 +61,7 @@ No modules.
 | <a name="input_descope_issuer"></a> [descope\_issuer](#input\_descope\_issuer) | n/a | `string` | `""` | no |
 | <a name="input_descope_project_id"></a> [descope\_project\_id](#input\_descope\_project\_id) | n/a | `string` | `""` | no |
 | <a name="input_descope_tenant_id"></a> [descope\_tenant\_id](#input\_descope\_tenant\_id) | n/a | `string` | `""` | no |
-| <a name="input_dispatch_enabled"></a> [dispatch\_enabled](#input\_dispatch\_enabled) | n/a | `bool` | `false` | no |
+| <a name="input_dispatch_enabled"></a> [dispatch\_enabled](#input\_dispatch\_enabled) | n/a | `bool` | `true` | no |
 | <a name="input_environment"></a> [environment](#input\_environment) | n/a | `string` | n/a | yes |
 | <a name="input_osv_api_url"></a> [osv\_api\_url](#input\_osv\_api\_url) | n/a | `string` | `"https://api.osv.dev"` | no |
 | <a name="input_osv_base_url"></a> [osv\_base\_url](#input\_osv\_base\_url) | n/a | `string` | `"https://storage.googleapis.com/osv-vulnerabilities"` | no |
