@@ -63,8 +63,8 @@ locals {
   descope_enabled       = var.descope_project_id != "" && var.descope_tenant_id != "" && var.descope_audience != ""
   descope_issuer        = coalesce(var.descope_issuer, "https://squawk.invalid")
   descope_discovery_url = coalesce(var.descope_discovery_url, "https://squawk.invalid/.well-known/openid-configuration")
-  advisory_queue_name = "${local.worker_name}-osv-advisories"
-  advisory_dlq_name   = "${local.worker_name}-osv-advisories-dlq"
+  advisory_queue_name   = "${local.worker_name}-osv-advisories"
+  advisory_dlq_name     = "${local.worker_name}-osv-advisories-dlq"
   descope_audience      = var.descope_audience
   worker_modules = concat(
     [{ name = basename(var.worker_bundle_path), content_file = var.worker_bundle_path, content_type = "application/javascript+module" }],
