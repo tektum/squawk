@@ -22,14 +22,14 @@ of the OpenTofu checks use the locked, initialized provider.
 ## Requirements
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.8.0 |
 | <a name="requirement_cloudflare"></a> [cloudflare](#requirement\_cloudflare) | ~> 5.0 |
 
 ## Providers
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="provider_cloudflare"></a> [cloudflare](#provider\_cloudflare) | 5.23.0 |
 | <a name="provider_terraform"></a> [terraform](#provider\_terraform) | n/a |
 
@@ -40,7 +40,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [cloudflare_d1_database.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/d1_database) | resource |
 | [cloudflare_queue.osv_advisories](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue) | resource |
 | [cloudflare_queue.osv_advisories_dlq](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue) | resource |
@@ -54,7 +54,7 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_cloudflare_account_id"></a> [cloudflare\_account\_id](#input\_cloudflare\_account\_id) | n/a | `string` | n/a | yes |
 | <a name="input_descope_audience"></a> [descope\_audience](#input\_descope\_audience) | n/a | `string` | `""` | no |
 | <a name="input_descope_discovery_url"></a> [descope\_discovery\_url](#input\_descope\_discovery\_url) | n/a | `string` | `""` | no |
@@ -70,7 +70,7 @@ No modules.
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_d1_database_id"></a> [d1\_database\_id](#output\_d1\_database\_id) | n/a |
 | <a name="output_worker_configuration"></a> [worker\_configuration](#output\_worker\_configuration) | n/a |
 | <a name="output_worker_name"></a> [worker\_name](#output\_worker\_name) | n/a |
