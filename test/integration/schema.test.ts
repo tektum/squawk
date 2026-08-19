@@ -64,3 +64,26 @@ describe("D1 migration contract", () => {
     expect(foreignKeys.results.length).toBeGreaterThan(0);
   });
 });
+
+it("can migrate all tenant-owned rows to the real Descope tenant", async () => {
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO orgs VALUES ('stale','app','owner/repo','monitor.yaml',0)"),
+    env.DB.prepare("INSERT INTO github_sources VALUES ('1','2','stale','registry_package','',0)"),
+    env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('sbom','stale','image','logical','linux/amd64','digest','complete',0)",
+    ),
+  ]);
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO orgs SELECT 'real',descope_inbound_app_id,github_dispatch_repo,github_dispatch_workflow,created_at FROM orgs ORDER BY created_at LIMIT 1",
+    ),
+    env.DB.prepare("UPDATE github_sources SET org_id='real' WHERE org_id!='real'"),
+    env.DB.prepare("UPDATE sboms SET org_id='real' WHERE org_id!='real'"),
+  ]);
+  await env.DB.prepare("DELETE FROM orgs WHERE descope_tenant_id!='real'").run();
+
+  await expect(env.DB.prepare("SELECT org_id FROM github_sources").first("org_id")).resolves.toBe(
+    "real",
+  );
+  await expect(env.DB.prepare("SELECT org_id FROM sboms").first("org_id")).resolves.toBe("real");
+});

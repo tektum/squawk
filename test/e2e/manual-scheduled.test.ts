@@ -64,22 +64,18 @@ describe("manual scheduled operation", () => {
 });
 
 async function authenticatedBindings(permissions: readonly string[], subject: string | undefined) {
-  const authIssuer = `https://${crypto.randomUUID()}.manual-scheduled.test`;
+  const baseUrl = `https://${crypto.randomUUID()}.manual-scheduled.test`;
+  const projectId = crypto.randomUUID();
   const pair = await generateKeyPair("RS256");
   const jwk = await exportJWK(pair.publicKey);
   respond({
-    url: `${authIssuer}/.well-known/openid-configuration`,
-    status: 200,
-    body: { issuer: authIssuer, jwks_uri: `${authIssuer}/jwks` },
-  });
-  respond({
-    url: `${authIssuer}/jwks`,
+    url: `${baseUrl}/v2/keys/${projectId}`,
     status: 200,
     body: { keys: [{ ...jwk, kid: "manual-key", alg: "RS256", use: "sig" }] },
   });
-  let token = new SignJWT({ tenants: ["tenant"], permissions })
+  let token = new SignJWT({ tenants: { tenant: { permissions, roles: [] } } })
     .setProtectedHeader({ alg: "RS256", kid: "manual-key" })
-    .setIssuer(authIssuer)
+    .setIssuer(projectId)
     .setAudience("audience")
     .setIssuedAt()
     .setExpirationTime("5m");
@@ -88,9 +84,9 @@ async function authenticatedBindings(permissions: readonly string[], subject: st
     token: await token.sign(pair.privateKey),
     env: {
       ...env,
-      DESCOPE_ISSUER: authIssuer,
       DESCOPE_AUDIENCE: "audience",
-      DESCOPE_DISCOVERY_URL: `${authIssuer}/.well-known/openid-configuration`,
+      DESCOPE_BASE_URL: baseUrl,
+      DESCOPE_PROJECT_ID: projectId,
       DISPATCH_ENABLED: "false",
     },
   };

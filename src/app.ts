@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { errors as joseErrors } from "jose";
 import { z } from "zod";
 import { AuthenticationError, AuthorizationError, authenticate, requireCapability } from "./auth";
 import { type Principal, SbomIdSchema, TenantIdSchema, vexInputSchema } from "./domain";
@@ -13,8 +12,8 @@ export type WorkerBindings = {
   readonly DB: D1Database;
   readonly DISPATCH_ENABLED: string;
   readonly DESCOPE_AUDIENCE: string;
-  readonly DESCOPE_DISCOVERY_URL: string;
-  readonly DESCOPE_ISSUER: string;
+  readonly DESCOPE_BASE_URL?: string;
+  readonly DESCOPE_PROJECT_ID: string;
   readonly GH_APP_ID: string;
   readonly GH_APP_INSTALLATION_ID: string;
   readonly GH_APP_PRIVATE_KEY: string;
@@ -41,9 +40,9 @@ app.post("/webhooks/github", (context) => handleGithubWebhook(context.req.raw, c
 
 app.use("/v1/*", async (context, next) => {
   const principal = await authenticate(context.req.header("Authorization"), {
-    issuer: context.env.DESCOPE_ISSUER,
+    projectId: context.env.DESCOPE_PROJECT_ID,
     audience: context.env.DESCOPE_AUDIENCE,
-    discoveryUrl: context.env.DESCOPE_DISCOVERY_URL,
+    ...(context.env.DESCOPE_BASE_URL ? { baseUrl: context.env.DESCOPE_BASE_URL } : {}),
   });
   context.set("principal", principal);
   await next();
@@ -112,7 +111,6 @@ app.get("/v1/orgs/:id/findings", async (context) => {
 
 app.onError((error, context) => {
   if (error instanceof AuthenticationError) return context.json({ error: "unauthorized" }, 401);
-  if (error instanceof joseErrors.JOSEError) return context.json({ error: "unauthorized" }, 401);
   if (error instanceof AuthorizationError) return context.json({ error: "forbidden" }, 403);
   if (error instanceof WebhookError) return context.json({ error: error.message }, error.status);
   if (error instanceof z.ZodError) {

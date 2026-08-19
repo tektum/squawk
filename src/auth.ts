@@ -1,22 +1,43 @@
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import DescopeClient, { type AuthenticationInfo } from "@descope/node-sdk";
 import { z } from "zod";
-import { CapabilitySchema, TenantIdSchema, UserIdSchema, type Principal } from "./domain";
+import {
+  capabilityValues,
+  CapabilitySchema,
+  TenantIdSchema,
+  UserIdSchema,
+  type Principal,
+} from "./domain";
 
-const discoverySchema = z.object({ jwks_uri: z.string().url() });
-const claimsSchema = z.object({
-  tenants: z.array(z.string().min(1)).length(1),
-  permissions: z.array(CapabilitySchema).default([]),
-  sub: z.string().min(1).optional(),
-});
+const claimsSchema = z.object({ sub: z.string().min(1).optional() });
 
 type AuthConfig = {
-  readonly issuer: string;
   readonly audience: string;
-  readonly discoveryUrl: string;
+  readonly baseUrl?: string;
+  readonly projectId: string;
 };
 
-const discoveryCache = new Map<string, z.infer<typeof discoverySchema>>();
-const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+type AuthClient = {
+  readonly getJwtPermissions: (token: string, tenant?: string) => string[];
+  readonly getTenants: (token: string) => string[];
+  readonly validateSession: (
+    token: string,
+    options?: { readonly audience?: string | string[] },
+  ) => Promise<AuthenticationInfo>;
+};
+const clients = new Map<string, AuthClient>();
+
+function client(config: AuthConfig): AuthClient {
+  const key = `${config.projectId}\u0000${config.baseUrl ?? ""}`;
+  let value = clients.get(key);
+  if (!value) {
+    value = DescopeClient({
+      projectId: config.projectId,
+      ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+    });
+    clients.set(key, value);
+  }
+  return value;
+}
 
 export class AuthenticationError extends Error {
   readonly name = "AuthenticationError";
@@ -31,35 +52,26 @@ export async function authenticate(
   config: AuthConfig,
 ): Promise<Principal> {
   if (!authorization?.startsWith("Bearer ")) throw new AuthenticationError("missing bearer token");
-  const discoveryUrl = new URL(config.discoveryUrl);
-  if (discoveryUrl.protocol !== "https:") throw new AuthenticationError("discovery must use HTTPS");
-  let discovery = discoveryCache.get(config.discoveryUrl);
-  if (!discovery) {
-    const discoveryResponse = await fetch(discoveryUrl, { signal: AbortSignal.timeout(5_000) });
-    if (!discoveryResponse.ok) throw new AuthenticationError("discovery unavailable");
-    discovery = discoverySchema.parse(await discoveryResponse.json());
-    discoveryCache.set(config.discoveryUrl, discovery);
+  const sdk = client(config);
+  let authInfo: AuthenticationInfo;
+  try {
+    authInfo = await sdk.validateSession(authorization.slice(7), {
+      ...(config.audience ? { audience: config.audience } : {}),
+    });
+  } catch {
+    throw new AuthenticationError("invalid session");
   }
-  const jwksUrl = new URL(discovery.jwks_uri);
-  if (jwksUrl.protocol !== "https:" || jwksUrl.origin !== discoveryUrl.origin) {
-    throw new AuthenticationError("untrusted discovery document");
-  }
-  let remoteJwks = jwksCache.get(discovery.jwks_uri);
-  if (!remoteJwks) {
-    remoteJwks = createRemoteJWKSet(jwksUrl, { cooldownDuration: 0 });
-    jwksCache.set(discovery.jwks_uri, remoteJwks);
-  }
-  const verified = await jwtVerify(authorization.slice(7), remoteJwks, {
-    issuer: config.issuer,
-    ...(config.audience ? { audience: config.audience } : {}),
-    algorithms: ["RS256"],
-    clockTolerance: 5,
-  });
-  const claims = claimsSchema.parse(verified.payload);
+  const tenants = sdk.getTenants(authInfo.jwt);
+  if (tenants.length !== 1) throw new AuthenticationError("ambiguous tenant context");
+  const tenantId = TenantIdSchema.parse(tenants[0]);
+  const permissions = new Set(sdk.getJwtPermissions(authInfo.jwt, tenantId));
+  const claims = claimsSchema.parse(authInfo.token);
   return {
-    tenantId: TenantIdSchema.parse(claims.tenants[0]),
+    tenantId,
     userId: claims.sub ? UserIdSchema.parse(claims.sub) : undefined,
-    capabilities: new Set(claims.permissions),
+    capabilities: new Set(
+      capabilityValues.filter((capability) => permissions.has(CapabilitySchema.parse(capability))),
+    ),
   };
 }
 
