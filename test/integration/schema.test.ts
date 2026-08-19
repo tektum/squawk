@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { assertSuccessfulExit } from "../../scripts/reconcile-tenant";
 
 describe("D1 migration contract", () => {
   it("enforces relational, identity, and status invariants", async () => {
@@ -88,21 +89,27 @@ it("can migrate all tenant-owned rows to the real Descope tenant", async () => {
   await expect(env.DB.prepare("SELECT org_id FROM sboms").first("org_id")).resolves.toBe("real");
 });
 
-it("detects a tenant reassignment SBOM identity collision", async () => {
+it("detects collisions between non-target tenant SBOM identities", async () => {
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO orgs VALUES ('stale','app','owner/repo','monitor.yaml',0)"),
+    env.DB.prepare("INSERT INTO orgs VALUES ('stale-a','app','owner/repo','monitor.yaml',0)"),
+    env.DB.prepare("INSERT INTO orgs VALUES ('stale-b','app','owner/repo','monitor.yaml',0)"),
     env.DB.prepare("INSERT INTO orgs VALUES ('real','app','owner/repo','monitor.yaml',0)"),
     env.DB.prepare(
-      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('stale-sbom','stale','image','logical','linux/amd64','digest','complete',0)",
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('stale-a-sbom','stale-a','image','logical','linux/amd64','digest-a','complete',0)",
     ),
     env.DB.prepare(
-      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('real-sbom','real','image','logical','linux/amd64','digest','complete',0)",
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('stale-b-sbom','stale-b','image','logical','linux/amd64','digest-b','complete',0)",
     ),
   ]);
 
   await expect(
     env.DB.prepare(
-      "SELECT COUNT(*) AS collision_count FROM sboms stale JOIN sboms target ON target.org_id='real' AND stale.org_id!='real' AND target.image_ref=stale.image_ref AND target.platform=stale.platform",
+      "SELECT COUNT(*) AS collision_count FROM (SELECT image_ref,platform FROM sboms GROUP BY image_ref,platform HAVING COUNT(*)>1)",
     ).first<number>("collision_count"),
   ).resolves.toBe(1);
+});
+
+it("reports a failed Wrangler reconciliation subprocess", () => {
+  expect(() => assertSuccessfulExit(1)).toThrow("wrangler exited with status 1");
+  expect(() => assertSuccessfulExit(0)).not.toThrow();
 });

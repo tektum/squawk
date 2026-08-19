@@ -9,13 +9,17 @@ function quote(value: string) {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+export function assertSuccessfulExit(exitCode: number) {
+  if (exitCode !== 0) throw new Error(`wrangler exited with status ${exitCode}`);
+}
+
 async function execute(database: string, sql: string) {
-  const process = Bun.spawn(
+  const child = Bun.spawn(
     ["bun", "run", "wrangler", "d1", "execute", database, "--remote", "--json", "--command", sql],
     { stdout: "pipe", stderr: "inherit" },
   );
-  const output = await new Response(process.stdout).text();
-  if ((await process.exited) !== 0) process.exit(1);
+  const output = await new Response(child.stdout).text();
+  assertSuccessfulExit(await child.exited);
   return output;
 }
 
@@ -26,7 +30,7 @@ if (import.meta.main) {
     JSON.parse(
       await execute(
         database,
-        `SELECT COUNT(*) AS collision_count FROM sboms stale JOIN sboms target ON target.org_id=${target} AND stale.org_id!=${target} AND target.image_ref=stale.image_ref AND target.platform=stale.platform`,
+        "SELECT COUNT(*) AS collision_count FROM (SELECT image_ref,platform FROM sboms GROUP BY image_ref,platform HAVING COUNT(*)>1)",
       ),
     ),
   );
