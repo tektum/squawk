@@ -36,19 +36,25 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
       subjectDigest: row.subject_digest,
     };
     try {
-      const outcome = await ingestPendingImage(env, job, now);
+      const outcome = await ingestPendingImage(env, job, now, budget);
       if (outcome === "pending")
         await env.DB.prepare(
-          "UPDATE github_ingestion_jobs SET status='pending',attempted_at=?,error=NULL WHERE subject_digest=?",
+          "UPDATE github_ingestion_jobs SET status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
         )
-          .bind(now, row.subject_digest)
+          .bind(now, row.installation_id, row.repository_id, row.subject_digest)
           .run();
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       await env.DB.prepare(
-        "UPDATE github_ingestion_jobs SET status='failed',attempted_at=?,error=? WHERE subject_digest=?",
+        "UPDATE github_ingestion_jobs SET status='failed',attempted_at=?,error=? WHERE installation_id=? AND repository_id=? AND subject_digest=?",
       )
-        .bind(now, error.message.slice(0, 200), row.subject_digest)
+        .bind(
+          now,
+          error.message.slice(0, 200),
+          row.installation_id,
+          row.repository_id,
+          row.subject_digest,
+        )
         .run();
       console.error("Scheduled GitHub ingestion failed", {
         subjectDigest: row.subject_digest,

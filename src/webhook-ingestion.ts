@@ -1,6 +1,7 @@
 import { backfillSbom } from "./backfill";
 import { sha256 } from "./digest";
 import { TenantIdSchema } from "./domain";
+import type { SubrequestBudget } from "./budget";
 import { statementsForImage } from "./registry-attestation";
 import { ingestSboms } from "./repository";
 import { imageIdentityFromPredicate, parsePredicate, sbomInputSchema } from "./sbom";
@@ -18,7 +19,7 @@ export type IngestionJob = {
 
 export async function enqueueIngestion(env: WebhookEnv, job: IngestionJob, now = Date.now()) {
   await env.DB.prepare(
-    "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,delivery_id,deployment_id,status,created_at) VALUES (?,?,?,?,?,?,'pending',?) ON CONFLICT(subject_digest) DO UPDATE SET delivery_id=COALESCE(excluded.delivery_id,delivery_id),deployment_id=COALESCE(excluded.deployment_id,deployment_id),status='pending',error=NULL",
+    "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,delivery_id,deployment_id,status,created_at) VALUES (?,?,?,?,?,?,'pending',?) ON CONFLICT(installation_id,repository_id,subject_digest) DO UPDATE SET delivery_id=COALESCE(excluded.delivery_id,delivery_id),deployment_id=COALESCE(excluded.deployment_id,deployment_id),status='pending',error=NULL",
   )
     .bind(
       job.subjectDigest,
@@ -38,6 +39,7 @@ export async function ingestPendingImage(
   },
   job: IngestionJob,
   now = Date.now(),
+  budget?: SubrequestBudget,
 ) {
   const source = await env.DB.prepare(
     "SELECT org_id FROM github_sources WHERE installation_id=? AND repository_id=?",
@@ -45,7 +47,7 @@ export async function ingestPendingImage(
     .bind(job.installationId, job.repositoryId)
     .first<{ readonly org_id: string }>();
   if (!source) throw new WebhookError(403, "wrong repository");
-  const statements = await statementsForImage(job.image, job.subjectDigest);
+  const statements = await statementsForImage(job.image, job.subjectDigest, budget);
   if (statements.length === 0) return "pending" as const;
   const requests = await Promise.all(
     statements.map(async (statement) => {
@@ -67,8 +69,10 @@ export async function ingestPendingImage(
   );
   const platformRequests = requests.filter((request) => request !== null);
   if (platformRequests.length === 0) {
-    await env.DB.prepare("DELETE FROM github_ingestion_jobs WHERE subject_digest=?")
-      .bind(job.subjectDigest)
+    await env.DB.prepare(
+      "DELETE FROM github_ingestion_jobs WHERE installation_id=? AND repository_id=? AND subject_digest=?",
+    )
+      .bind(job.installationId, job.repositoryId, job.subjectDigest)
       .run();
     return "ignored" as const;
   }
@@ -95,9 +99,9 @@ export async function ingestPendingImage(
       now,
       now,
     ),
-    env.DB.prepare("DELETE FROM github_ingestion_jobs WHERE subject_digest=?").bind(
-      job.subjectDigest,
-    ),
+    env.DB.prepare(
+      "DELETE FROM github_ingestion_jobs WHERE installation_id=? AND repository_id=? AND subject_digest=?",
+    ).bind(job.installationId, job.repositoryId, job.subjectDigest),
   ]);
   const backfills = result.createdSbomIds.map((sbomId) =>
     backfillSbom({ database: env.DB, sbomId, osvApiUrl: env.OSV_API_URL }),

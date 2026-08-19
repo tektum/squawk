@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SubrequestBudget } from "./budget";
 import { statementSchema, WebhookError } from "./webhook-contract";
 
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -31,7 +32,13 @@ const bundleSchema = z.object({
 });
 const tokenSchema = z.object({ token: z.string().min(1) });
 
-async function registryJson(url: URL, token: string, accept: string): Promise<unknown> {
+async function registryJson(
+  url: URL,
+  token: string,
+  accept: string,
+  budget?: SubrequestBudget,
+): Promise<unknown> {
+  budget?.take();
   const response = await fetch(url, {
     headers: { accept, authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(10_000),
@@ -41,11 +48,12 @@ async function registryJson(url: URL, token: string, accept: string): Promise<un
   return response.json();
 }
 
-export async function statementsForImage(image: string, digest: string) {
+export async function statementsForImage(image: string, digest: string, budget?: SubrequestBudget) {
   const imagePath = image.slice("ghcr.io/".length);
   const tokenUrl = new URL("https://ghcr.io/token");
   tokenUrl.searchParams.set("scope", `repository:${imagePath}:pull`);
   tokenUrl.searchParams.set("service", "ghcr.io");
+  budget?.take();
   const tokenResponse = await fetch(tokenUrl, { signal: AbortSignal.timeout(10_000) });
   if (!tokenResponse.ok) throw new WebhookError(502, "registry token unavailable");
   const { token } = tokenSchema.parse(await tokenResponse.json());
@@ -54,6 +62,7 @@ export async function statementsForImage(image: string, digest: string) {
     new URL(`${base}/manifests/sha256-${digest.slice("sha256:".length)}`),
     token,
     "application/vnd.oci.image.index.v1+json",
+    budget,
   );
   if (!rawIndex) return [];
   const statements: z.infer<typeof statementSchema>[] = [];
@@ -72,6 +81,7 @@ export async function statementsForImage(image: string, digest: string) {
       new URL(`${base}/manifests/${descriptor.digest}`),
       token,
       "application/vnd.oci.image.manifest.v1+json",
+      budget,
     );
     const manifest = artifactManifestSchema.safeParse(rawManifest);
     if (!manifest.success) continue;
@@ -80,6 +90,7 @@ export async function statementsForImage(image: string, digest: string) {
         new URL(`${base}/blobs/${layer.digest}`),
         token,
         "application/vnd.dev.sigstore.bundle.v0.3+json",
+        budget,
       );
       const bundle = bundleSchema.safeParse(rawBundle);
       if (!bundle.success) continue;

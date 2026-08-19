@@ -1,6 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
+import { enqueueIngestion } from "../../src/webhook-ingestion";
 import {
   type FailureCase,
   githubWebhookFixture,
@@ -195,6 +196,35 @@ describe("GitHub registry package webhook", () => {
     expect(
       await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
     ).toBe(0);
+  });
+
+  it("keeps identical digests isolated by GitHub source", async () => {
+    const fixture = await githubWebhookFixture("unattested");
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs VALUES ('peer','app','peer/repo','monitor.yaml',0)"),
+      env.DB.prepare(
+        "INSERT INTO github_sources (installation_id,repository_id,org_id,workflow,ref,created_at) VALUES ('999','999','peer','registry_package','',0)",
+      ),
+    ]);
+    const first = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      createExecutionContext(),
+    );
+    const event = {
+      deliveryId: crypto.randomUUID(),
+      deploymentId: "peer-deployment",
+      image: "ghcr.io/owner/demo",
+      installationId: "999",
+      repositoryId: "999",
+      subjectDigest: `sha256:${"b".repeat(64)}`,
+    };
+    await enqueueIngestion({ ...env, ...fixture.bindings } as never, event);
+
+    expect(first.status).toBe(202);
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) FROM github_ingestion_jobs").first<number>("COUNT(*)"),
+    ).toBe(2);
   });
 
   it("leaves no delivery receipt when GitHub fails transiently", async () => {
