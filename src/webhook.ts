@@ -1,8 +1,5 @@
 import { backfillSbom } from "./backfill";
-import { sha256 } from "./digest";
-import { statementsForImage } from "./registry-attestation";
-import { ingestSboms } from "./repository";
-import { imageIdentityFromPredicate, parsePredicate, sbomInputSchema } from "./sbom";
+import { enqueueIngestion, ingestPendingImage } from "./webhook-ingestion";
 import { parseWebhook, sourceSchema, type WebhookEnv, WebhookError } from "./webhook-contract";
 
 export { WebhookError } from "./webhook-contract";
@@ -53,59 +50,20 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
       );
     return Response.json({ status: existing.status }, { status: 200 });
   }
-  const statements = await statementsForImage(image, digest);
-  if (statements.length === 0) return new Response(null, { status: 204 });
+  const job = {
+    deliveryId,
+    deploymentId: packageVersionId,
+    image,
+    installationId: source.installation_id,
+    repositoryId,
+    subjectDigest: digest,
+  };
   const now = Date.now();
-  const requests = await Promise.all(
-    statements.map(async (statement) => {
-      const identity = imageIdentityFromPredicate(statement.predicate);
-      if (!identity) return null;
-      const input = sbomInputSchema.parse({
-        image_ref: `${image}@${identity.imageDigest}`,
-        logical_image_ref: `${image}@${digest}`,
-        platform: identity.platform,
-        idempotency_key: `${digest}:${identity.platform}`,
-        predicate: statement.predicate,
-      });
-      return {
-        input,
-        components: parsePredicate(statement.predicate),
-        predicateSha256: await sha256(JSON.stringify(statement.predicate)),
-      };
-    }),
-  );
-  const platformRequests = requests.filter((request) => request !== null);
-  if (platformRequests.length === 0) return new Response(null, { status: 204 });
-  const uniqueRequests = platformRequests.filter(
-    (request, index) =>
-      platformRequests.findIndex(
-        (candidate) =>
-          candidate.input.image_ref === request.input.image_ref &&
-          candidate.input.platform === request.input.platform,
-      ) === index,
-  );
-  const result = await ingestSboms(env.DB, source.org_id, uniqueRequests);
-  if (result.kind === "conflict") throw new WebhookError(409, "conflicting platform submission");
-  for (const sbomId of result.createdSbomIds)
-    env.EXECUTION_CONTEXT.waitUntil(
-      backfillSbom({ database: env.DB, sbomId, osvApiUrl: env.OSV_API_URL }),
-    );
-  await env.DB.prepare(
-    "INSERT OR IGNORE INTO github_deliveries (delivery_id,deployment_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at,completed_at) VALUES (?,?,?,?,?,?, 'accepted',?,?)",
-  )
-    .bind(
-      deliveryId,
-      packageVersionId,
-      source.installation_id,
-      repositoryId,
-      digest,
-      digest,
-      now,
-      now,
-    )
-    .run();
+  await enqueueIngestion(env, job, now);
+  const outcome = await ingestPendingImage(env, job, now);
+  if (outcome === "ignored") return new Response(null, { status: 204 });
   return Response.json(
-    { sbom_ids: result.sbomIds, status: result.kind === "created" ? "pending" : "complete" },
-    { status: result.kind === "created" ? 202 : 200 },
+    { status: outcome === "complete" ? "accepted" : "pending" },
+    { status: 202 },
   );
 }

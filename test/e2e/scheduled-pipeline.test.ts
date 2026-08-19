@@ -3,6 +3,7 @@ import { exportPKCS8, generateKeyPair } from "jose";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchPending } from "../../src/dispatch";
 import { runScheduled } from "../../src/scheduled";
+import { githubWebhookFixture, INSTALLATION_ID, REPOSITORY_ID } from "../fixtures/github-webhook";
 import { respond } from "../http";
 
 describe("durable multi-platform dispatch", () => {
@@ -177,5 +178,95 @@ describe("durable multi-platform dispatch", () => {
       expect.objectContaining({ ecosystem: "npm" }),
     );
     error.mockRestore();
+  });
+});
+
+describe("delayed GitHub attestation ingestion", () => {
+  beforeEach(async () => {
+    await env.DB.prepare(
+      "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,workflow,ref,created_at) VALUES (?,?,?,?,?,0)",
+    )
+      .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "registry_package", "")
+      .run();
+  });
+
+  it("ingests a pending image once attestations become visible", async () => {
+    const visibility = { value: false };
+    const fixture = await githubWebhookFixture(undefined, 200, 789, visibility);
+    await env.DB.prepare(
+      "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,delivery_id,deployment_id,status,created_at) VALUES (?,?,?,?,?,?,'pending',0)",
+    )
+      .bind(
+        `sha256:${"b".repeat(64)}`,
+        String(INSTALLATION_ID),
+        String(REPOSITORY_ID),
+        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+        crypto.randomUUID(),
+        "789",
+      )
+      .run();
+    visibility.value = true;
+
+    await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 2000)").run();
+    await runScheduled(
+      {
+        ...env,
+        ...fixture.bindings,
+        GH_APP_ID: "",
+        GH_APP_INSTALLATION_ID: "",
+        GH_APP_PRIVATE_KEY: "",
+        OSV_API_URL: "https://api.osv.test",
+        OSV_BASE_URL: "https://osv.test",
+        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+      },
+      2_000,
+    );
+
+    const pending = await env.DB.prepare(
+      "SELECT status,error,attempted_at FROM github_ingestion_jobs",
+    ).first();
+    expect(pending, JSON.stringify(pending)).toBeNull();
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
+    ).toBe(1);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
+  });
+
+  it("continues large attestation indexes within the subrequest budget", async () => {
+    const fixture = await githubWebhookFixture("many-attestations");
+    await env.DB.prepare(
+      "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,created_at) VALUES (?,?,?,?, 'pending',0)",
+    )
+      .bind(
+        `sha256:${"b".repeat(64)}`,
+        String(INSTALLATION_ID),
+        String(REPOSITORY_ID),
+        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+      )
+      .run();
+    await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 2000)").run();
+
+    await runScheduled(
+      {
+        ...env,
+        ...fixture.bindings,
+        GH_APP_ID: "",
+        GH_APP_INSTALLATION_ID: "",
+        GH_APP_PRIVATE_KEY: "",
+        OSV_API_URL: "https://api.osv.test",
+        OSV_BASE_URL: "https://osv.test",
+        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+      },
+      2_000,
+    );
+
+    await expect(
+      env.DB.prepare("SELECT next_descriptor FROM github_ingestion_jobs WHERE subject_digest=?")
+        .bind(`sha256:${"b".repeat(64)}`)
+        .first<number>("next_descriptor"),
+    ).resolves.toBe(8);
   });
 });

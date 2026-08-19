@@ -15,6 +15,7 @@ export type FailureCase =
   | "ignored"
   | "index-only"
   | "installation"
+  | "many-attestations"
   | "noisy-index"
   | "predicate"
   | "repository"
@@ -36,6 +37,7 @@ export async function githubWebhookFixture(
   failure?: FailureCase,
   registryStatus = 200,
   packageVersionId = 789,
+  attestationsVisible: { value: boolean } = { value: failure !== "unattested" },
 ): Promise<Fixture> {
   const appKeys = await generateKeyPair("RS256", { extractable: true });
   const component =
@@ -100,6 +102,8 @@ export async function githubWebhookFixture(
       statement: statements[1],
     },
   ];
+  const primaryAttestation = attestations[0];
+  if (!primaryAttestation) throw new Error("missing primary attestation");
   server.use(
     http.get("https://ghcr.io/token", () =>
       registryStatus === 200
@@ -109,7 +113,7 @@ export async function githubWebhookFixture(
     http.get("https://ghcr.io/v2/owner/demo/manifests/:reference", ({ params }) => {
       // biome-ignore lint/complexity/useLiteralKeys: params is an index-signature map.
       const reference = String(params["reference"]);
-      if (failure === "unattested" && reference === `sha256-${INDEX_DIGEST.slice(7)}`)
+      if (!attestationsVisible.value && reference === `sha256-${INDEX_DIGEST.slice(7)}`)
         return HttpResponse.json({ error: "not found" }, { status: 404 });
       if (reference === `sha256-${INDEX_DIGEST.slice(7)}`)
         return HttpResponse.json({
@@ -122,13 +126,16 @@ export async function githubWebhookFixture(
                   mediaType: "application/vnd.oci.image.manifest.v1+json",
                 }))
               : []),
-            ...(failure === "duplicates" ? [...attestations, ...attestations] : attestations).map(
-              (attestation) => ({
-                artifactType: "application/vnd.dev.sigstore.bundle.v0.3+json",
-                digest: attestation.manifestDigest,
-                mediaType: "application/vnd.oci.image.manifest.v1+json",
-              }),
-            ),
+            ...(failure === "many-attestations"
+              ? Array.from({ length: 10 }, () => primaryAttestation)
+              : failure === "duplicates"
+                ? [...attestations, ...attestations]
+                : attestations
+            ).map((attestation) => ({
+              artifactType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+              digest: attestation.manifestDigest,
+              mediaType: "application/vnd.oci.image.manifest.v1+json",
+            })),
           ],
         });
       const attestation = attestations.find((candidate) => candidate.manifestDigest === reference);

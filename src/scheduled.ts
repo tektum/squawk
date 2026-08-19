@@ -2,17 +2,68 @@ import { z } from "zod";
 import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
 import { SubrequestBudget } from "./budget";
 import { dispatchPending } from "./dispatch";
+import { ingestPendingImage, type IngestionJob } from "./webhook-ingestion";
 import { discoverAdvisories, requeueAdvisoryJobs } from "./sync";
 
-type ScheduledEnv = Parameters<typeof dispatchPending>[0] & {
-  readonly DISPATCH_ENABLED: string;
-  readonly OSV_API_URL: string;
-  readonly OSV_BASE_URL: string;
-  readonly OSV_ADVISORY_JOBS: Queue;
-};
+type ScheduledEnv = Parameters<typeof dispatchPending>[0] &
+  Parameters<typeof ingestPendingImage>[0] & {
+    readonly DISPATCH_ENABLED: string;
+    readonly OSV_API_URL: string;
+    readonly OSV_BASE_URL: string;
+    readonly OSV_ADVISORY_JOBS: Queue;
+  };
 
 export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise<void> {
   const budget = new SubrequestBudget(45);
+  const ingestions = await env.DB.prepare(
+    "SELECT delivery_id,deployment_id,installation_id,repository_id,logical_image_ref,next_descriptor,subject_digest FROM github_ingestion_jobs WHERE status IN ('pending','failed') ORDER BY COALESCE(attempted_at,0),created_at LIMIT 10",
+  ).all<{
+    readonly delivery_id: string | null;
+    readonly deployment_id: string | null;
+    readonly installation_id: string;
+    readonly repository_id: string;
+    readonly logical_image_ref: string;
+    readonly next_descriptor: number;
+    readonly subject_digest: string;
+  }>();
+  for (const row of ingestions.results) {
+    if (budget.remaining <= 8) break;
+    const job: IngestionJob = {
+      ...(row.delivery_id ? { deliveryId: row.delivery_id } : {}),
+      ...(row.deployment_id ? { deploymentId: row.deployment_id } : {}),
+      image: row.logical_image_ref.slice(0, -row.subject_digest.length - 1),
+      nextDescriptor: row.next_descriptor,
+      installationId: row.installation_id,
+      repositoryId: row.repository_id,
+      subjectDigest: row.subject_digest,
+    };
+    try {
+      const outcome = await ingestPendingImage(env, job, now, budget);
+      if (outcome === "pending")
+        await env.DB.prepare(
+          "UPDATE github_ingestion_jobs SET status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
+        )
+          .bind(now, row.installation_id, row.repository_id, row.subject_digest)
+          .run();
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      await env.DB.prepare(
+        "UPDATE github_ingestion_jobs SET status='failed',attempted_at=?,error=? WHERE installation_id=? AND repository_id=? AND subject_digest=?",
+      )
+        .bind(
+          now,
+          error.message.slice(0, 200),
+          row.installation_id,
+          row.repository_id,
+          row.subject_digest,
+        )
+        .run();
+      console.error("Scheduled GitHub ingestion failed", {
+        subjectDigest: row.subject_digest,
+        error,
+      });
+    }
+  }
   const backfills = await env.DB.prepare(
     "SELECT id FROM sboms WHERE retired_at IS NULL AND (backfill_status IN ('pending','failed') OR (backfill_status='running' AND COALESCE(backfill_attempted_at,0)<?)) ORDER BY COALESCE(backfill_attempted_at,0),created_at LIMIT 10",
   )

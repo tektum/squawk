@@ -1,6 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
+import { enqueueIngestion } from "../../src/webhook-ingestion";
 import {
   type FailureCase,
   githubWebhookFixture,
@@ -108,7 +109,7 @@ describe("GitHub registry package webhook", () => {
     );
     await Promise.all(contexts.map(waitOnExecutionContext));
 
-    expect(responses.map((response) => response.status).sort()).toEqual([200, 202]);
+    expect(responses.map((response) => response.status)).toEqual([202, 202]);
     expect(
       await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
     ).toBe(1);
@@ -163,7 +164,7 @@ describe("GitHub registry package webhook", () => {
     ).toBe(0);
   });
 
-  it.each(["ignored", "index-only", "unattested"] satisfies readonly FailureCase[])(
+  it.each(["ignored", "index-only"] satisfies readonly FailureCase[])(
     "ignores %s package activity",
     async (failure) => {
       const fixture = await githubWebhookFixture(failure);
@@ -177,6 +178,58 @@ describe("GitHub registry package webhook", () => {
       expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(0);
     },
   );
+
+  it("persists an unattested image for scheduled retry", async () => {
+    const visibility = { value: false };
+    const fixture = await githubWebhookFixture(undefined, 200, 789, visibility);
+    const response = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      createExecutionContext(),
+    );
+
+    expect(response.status, await response.clone().text()).toBe(202);
+    expect(await response.json()).toEqual({ status: "pending" });
+    expect(
+      await env.DB.prepare("SELECT status FROM github_ingestion_jobs").first<string>("status"),
+    ).toBe("pending");
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
+    ).toBe(0);
+  });
+
+  it("keeps identical digests isolated by GitHub source", async () => {
+    const fixture = await githubWebhookFixture("unattested");
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs VALUES ('peer','app','peer/repo','monitor.yaml',0)"),
+      env.DB.prepare(
+        "INSERT INTO github_sources (installation_id,repository_id,org_id,workflow,ref,created_at) VALUES ('999','999','peer','registry_package','',0)",
+      ),
+    ]);
+    const first = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      createExecutionContext(),
+    );
+    const firstJob = await env.DB.prepare(
+      "SELECT subject_digest FROM github_ingestion_jobs",
+    ).first<{ readonly subject_digest: string }>();
+    if (!firstJob) throw new Error("expected pending job");
+    const event = {
+      deliveryId: crypto.randomUUID(),
+      deploymentId: "peer-deployment",
+      image: "ghcr.io/owner/demo",
+      installationId: "999",
+      repositoryId: "999",
+      subjectDigest: firstJob.subject_digest,
+    };
+    await enqueueIngestion({ ...env, ...fixture.bindings } as never, event);
+
+    expect(first.status).toBe(202);
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) FROM github_ingestion_jobs").first<number>("COUNT(*)"),
+    ).toBe(2);
+  });
 
   it("leaves no delivery receipt when GitHub fails transiently", async () => {
     const fixture = await githubWebhookFixture(undefined, 503);
