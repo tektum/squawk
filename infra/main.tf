@@ -51,11 +51,11 @@ variable "dispatch_enabled" {
 }
 
 locals {
-  worker_name           = "squawk-${var.environment}"
-  descope_enabled       = var.descope_project_id != "" && var.descope_tenant_id != "" && var.descope_audience != ""
-  advisory_queue_name   = "${local.worker_name}-osv-advisories"
-  advisory_dlq_name     = "${local.worker_name}-osv-advisories-dlq"
-  descope_audience      = var.descope_audience
+  worker_name         = "squawk-${var.environment}"
+  descope_enabled     = var.descope_project_id != "" && var.descope_tenant_id != "" && var.descope_audience != ""
+  advisory_queue_name = "${local.worker_name}-osv-advisories"
+  advisory_dlq_name   = "${local.worker_name}-osv-advisories-dlq"
+  descope_audience    = var.descope_audience
   worker_modules = concat(
     [{ name = basename(var.worker_bundle_path), content_file = var.worker_bundle_path, content_type = "application/javascript+module" }],
     [for name in fileset(dirname(var.worker_bundle_path), "*.wasm") : {
