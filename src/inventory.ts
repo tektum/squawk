@@ -11,7 +11,7 @@ const statsSchema = z.object({
 const imageSchema = z.object({
   components: z.number(),
   findings: z.number(),
-  image_ref: z.string(),
+  image_ref: z.string().regex(/@sha256:[a-f0-9]{64}$/),
   platforms: z.string(),
   status: z.string(),
 });
@@ -42,7 +42,7 @@ export async function inventoryResponse(request: Request, database: D1Database):
       CASE WHEN SUM(s.backfill_status!='complete')=0 THEN 'indexed' ELSE 'processing' END AS status
       FROM sboms s LEFT JOIN components c ON c.sbom_id=s.id
       LEFT JOIN findings f ON f.component_id=c.id
-      WHERE s.retired_at IS NULL AND s.logical_image_ref LIKE ?
+      WHERE s.retired_at IS NULL AND s.logical_image_ref LIKE ? AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*' AND length(substr(s.logical_image_ref,instr(s.logical_image_ref,'@sha256:')+8))=64
       GROUP BY s.logical_image_ref ORDER BY MAX(s.created_at) DESC LIMIT 50`)
       .bind(like)
       .all(),

@@ -24,6 +24,9 @@ describe("public inventory", () => {
         "INSERT INTO vulnerabilities VALUES ('OSV-1','npm','demo<script>','{}','high','summary','2026-01-01T00:00:00Z')",
       ),
       env.DB.prepare("INSERT INTO findings VALUES ('tenant',1,'OSV-1',1,NULL)"),
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('tagged','tenant','ghcr.io/owner/tagged:latest','ghcr.io/owner/tagged:latest','linux/amd64','tagged','complete',1)",
+      ),
     ]);
   });
 
@@ -42,6 +45,7 @@ describe("public inventory", () => {
     expect(html).toContain("linux/amd64 · linux/arm64");
     expect(html).toContain("demo&lt;script&gt;");
     expect(html).not.toContain("demo<script>");
+    expect(html).not.toContain("ghcr.io/owner/tagged:latest");
     expect(html).toContain(">1</strong><span>findings");
   });
 
