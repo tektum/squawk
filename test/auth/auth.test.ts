@@ -90,6 +90,16 @@ describe("Descope authentication", () => {
     ).rejects.toThrow("ambiguous tenant context");
   });
 
+  it("rejects empty audience and non-HTTPS Descope endpoints", async () => {
+    const session = `Bearer ${await token({ tenant: { permissions: [], roles: [] } })}`;
+    await expect(authenticate(session, { ...config, audience: "" })).rejects.toThrow(
+      "invalid authentication input",
+    );
+    await expect(
+      authenticate(session, { ...config, baseUrl: "http://descope.test" }),
+    ).rejects.toThrow("invalid authentication input");
+  });
+
   it("rejects expired tokens and bad signatures", async () => {
     const expired = await new SignJWT({ tenants: { tenant: { permissions: [], roles: [] } } })
       .setProtectedHeader({ alg: "RS256", kid: "key-1" })

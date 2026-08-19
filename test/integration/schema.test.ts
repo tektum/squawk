@@ -87,3 +87,22 @@ it("can migrate all tenant-owned rows to the real Descope tenant", async () => {
   );
   await expect(env.DB.prepare("SELECT org_id FROM sboms").first("org_id")).resolves.toBe("real");
 });
+
+it("detects a tenant reassignment SBOM identity collision", async () => {
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO orgs VALUES ('stale','app','owner/repo','monitor.yaml',0)"),
+    env.DB.prepare("INSERT INTO orgs VALUES ('real','app','owner/repo','monitor.yaml',0)"),
+    env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('stale-sbom','stale','image','logical','linux/amd64','digest','complete',0)",
+    ),
+    env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('real-sbom','real','image','logical','linux/amd64','digest','complete',0)",
+    ),
+  ]);
+
+  await expect(
+    env.DB.prepare(
+      "SELECT COUNT(*) AS collision_count FROM sboms stale JOIN sboms target ON target.org_id='real' AND stale.org_id!='real' AND target.image_ref=stale.image_ref AND target.platform=stale.platform",
+    ).first<number>("collision_count"),
+  ).resolves.toBe(1);
+});
