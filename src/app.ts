@@ -3,6 +3,7 @@ import { errors as joseErrors } from "jose";
 import { z } from "zod";
 import { AuthenticationError, AuthorizationError, authenticate, requireCapability } from "./auth";
 import { type Principal, SbomIdSchema, TenantIdSchema, vexInputSchema } from "./domain";
+import { inventoryResponse } from "./inventory";
 import { appendVex, listFindings, retireSbom } from "./repository";
 import { handleGithubWebhook, WebhookError } from "./webhook";
 import { runScheduled } from "./scheduled";
@@ -33,6 +34,8 @@ app.get("/health", (context) => {
   if (context.env.BUILD_SHA) context.header("x-squawk-version", context.env.BUILD_SHA);
   return context.json({ status: "ok" });
 });
+
+app.get("/", (context) => inventoryResponse(context.req.raw, context.env.DB));
 
 app.post("/webhooks/github", (context) => handleGithubWebhook(context.req.raw, context.env));
 
