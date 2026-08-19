@@ -234,4 +234,39 @@ describe("delayed GitHub attestation ingestion", () => {
     ).toBe(1);
     expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(2);
   });
+
+  it("continues large attestation indexes within the subrequest budget", async () => {
+    const fixture = await githubWebhookFixture("many-attestations");
+    await env.DB.prepare(
+      "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,created_at) VALUES (?,?,?,?, 'pending',0)",
+    )
+      .bind(
+        `sha256:${"b".repeat(64)}`,
+        String(INSTALLATION_ID),
+        String(REPOSITORY_ID),
+        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+      )
+      .run();
+    await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 2000)").run();
+
+    await runScheduled(
+      {
+        ...env,
+        ...fixture.bindings,
+        GH_APP_ID: "",
+        GH_APP_INSTALLATION_ID: "",
+        GH_APP_PRIVATE_KEY: "",
+        OSV_API_URL: "https://api.osv.test",
+        OSV_BASE_URL: "https://osv.test",
+        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+      },
+      2_000,
+    );
+
+    await expect(
+      env.DB.prepare("SELECT next_descriptor FROM github_ingestion_jobs WHERE subject_digest=?")
+        .bind(`sha256:${"b".repeat(64)}`)
+        .first<number>("next_descriptor"),
+    ).resolves.toBe(8);
+  });
 });

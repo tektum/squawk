@@ -13,6 +13,7 @@ export type IngestionJob = {
   readonly deploymentId?: string;
   readonly image: string;
   readonly installationId: string;
+  readonly nextDescriptor?: number;
   readonly repositoryId: string;
   readonly subjectDigest: string;
 };
@@ -47,7 +48,13 @@ export async function ingestPendingImage(
     .bind(job.installationId, job.repositoryId)
     .first<{ readonly org_id: string }>();
   if (!source) throw new WebhookError(403, "wrong repository");
-  const statements = await statementsForImage(job.image, job.subjectDigest, budget);
+  const registry = await statementsForImage(
+    job.image,
+    job.subjectDigest,
+    budget,
+    job.nextDescriptor,
+  );
+  const statements = registry.statements;
   if (statements.length === 0) return "pending" as const;
   const requests = await Promise.all(
     statements.map(async (statement) => {
@@ -68,13 +75,21 @@ export async function ingestPendingImage(
     }),
   );
   const platformRequests = requests.filter((request) => request !== null);
-  if (platformRequests.length === 0) {
+  if (platformRequests.length === 0 && registry.complete) {
     await env.DB.prepare(
       "DELETE FROM github_ingestion_jobs WHERE installation_id=? AND repository_id=? AND subject_digest=?",
     )
       .bind(job.installationId, job.repositoryId, job.subjectDigest)
       .run();
     return "ignored" as const;
+  }
+  if (platformRequests.length === 0) {
+    await env.DB.prepare(
+      "UPDATE github_ingestion_jobs SET next_descriptor=?,status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
+    )
+      .bind(registry.nextDescriptor, now, job.installationId, job.repositoryId, job.subjectDigest)
+      .run();
+    return "pending" as const;
   }
   const uniqueRequests = platformRequests.filter(
     (request, index) =>
@@ -86,6 +101,14 @@ export async function ingestPendingImage(
   );
   const result = await ingestSboms(env.DB, TenantIdSchema.parse(source.org_id), uniqueRequests);
   if (result.kind === "conflict") throw new WebhookError(409, "conflicting platform submission");
+  if (!registry.complete) {
+    await env.DB.prepare(
+      "UPDATE github_ingestion_jobs SET next_descriptor=?,status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
+    )
+      .bind(registry.nextDescriptor, now, job.installationId, job.repositoryId, job.subjectDigest)
+      .run();
+    return "pending" as const;
+  }
   await env.DB.batch([
     env.DB.prepare(
       "INSERT OR IGNORE INTO github_deliveries (delivery_id,deployment_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at,completed_at) VALUES (?,?,?,?,?,?,'accepted',?,?)",
@@ -104,7 +127,12 @@ export async function ingestPendingImage(
     ).bind(job.installationId, job.repositoryId, job.subjectDigest),
   ]);
   const backfills = result.createdSbomIds.map((sbomId) =>
-    backfillSbom({ database: env.DB, sbomId, osvApiUrl: env.OSV_API_URL }),
+    backfillSbom({
+      database: env.DB,
+      sbomId,
+      osvApiUrl: env.OSV_API_URL,
+      ...(budget ? { budget } : {}),
+    }),
   );
   if (env.EXECUTION_CONTEXT)
     for (const backfill of backfills) env.EXECUTION_CONTEXT.waitUntil(backfill);

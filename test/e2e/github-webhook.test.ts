@@ -211,13 +211,17 @@ describe("GitHub registry package webhook", () => {
       { ...env, ...fixture.bindings },
       createExecutionContext(),
     );
+    const firstJob = await env.DB.prepare(
+      "SELECT subject_digest FROM github_ingestion_jobs",
+    ).first<{ readonly subject_digest: string }>();
+    if (!firstJob) throw new Error("expected pending job");
     const event = {
       deliveryId: crypto.randomUUID(),
       deploymentId: "peer-deployment",
       image: "ghcr.io/owner/demo",
       installationId: "999",
       repositoryId: "999",
-      subjectDigest: `sha256:${"b".repeat(64)}`,
+      subjectDigest: firstJob.subject_digest,
     };
     await enqueueIngestion({ ...env, ...fixture.bindings } as never, event);
 

@@ -6,6 +6,7 @@ CREATE TABLE github_ingestion_jobs (
   delivery_id TEXT,
   deployment_id TEXT,
   status TEXT NOT NULL CHECK (status IN ('pending', 'failed')),
+  next_descriptor INTEGER NOT NULL DEFAULT 0,
   attempted_at INTEGER,
   error TEXT,
   created_at INTEGER NOT NULL,

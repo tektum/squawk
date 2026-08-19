@@ -16,13 +16,14 @@ type ScheduledEnv = Parameters<typeof dispatchPending>[0] &
 export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise<void> {
   const budget = new SubrequestBudget(45);
   const ingestions = await env.DB.prepare(
-    "SELECT delivery_id,deployment_id,installation_id,repository_id,logical_image_ref,subject_digest FROM github_ingestion_jobs WHERE status IN ('pending','failed') ORDER BY COALESCE(attempted_at,0),created_at LIMIT 10",
+    "SELECT delivery_id,deployment_id,installation_id,repository_id,logical_image_ref,next_descriptor,subject_digest FROM github_ingestion_jobs WHERE status IN ('pending','failed') ORDER BY COALESCE(attempted_at,0),created_at LIMIT 10",
   ).all<{
     readonly delivery_id: string | null;
     readonly deployment_id: string | null;
     readonly installation_id: string;
     readonly repository_id: string;
     readonly logical_image_ref: string;
+    readonly next_descriptor: number;
     readonly subject_digest: string;
   }>();
   for (const row of ingestions.results) {
@@ -31,6 +32,7 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
       ...(row.delivery_id ? { deliveryId: row.delivery_id } : {}),
       ...(row.deployment_id ? { deploymentId: row.deployment_id } : {}),
       image: row.logical_image_ref.slice(0, -row.subject_digest.length - 1),
+      nextDescriptor: row.next_descriptor,
       installationId: row.installation_id,
       repositoryId: row.repository_id,
       subjectDigest: row.subject_digest,

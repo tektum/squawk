@@ -48,7 +48,16 @@ async function registryJson(
   return response.json();
 }
 
-export async function statementsForImage(image: string, digest: string, budget?: SubrequestBudget) {
+export async function statementsForImage(
+  image: string,
+  digest: string,
+  budget?: SubrequestBudget,
+  startDescriptor = 0,
+): Promise<{
+  readonly complete: boolean;
+  readonly nextDescriptor: number;
+  readonly statements: readonly z.infer<typeof statementSchema>[];
+}> {
   const imagePath = image.slice("ghcr.io/".length);
   const tokenUrl = new URL("https://ghcr.io/token");
   tokenUrl.searchParams.set("scope", `repository:${imagePath}:pull`);
@@ -64,7 +73,7 @@ export async function statementsForImage(image: string, digest: string, budget?:
     "application/vnd.oci.image.index.v1+json",
     budget,
   );
-  if (!rawIndex) return [];
+  if (!rawIndex) return { complete: true, nextDescriptor: 0, statements: [] };
   const statements: z.infer<typeof statementSchema>[] = [];
   let sawStatement = false;
   const descriptors = indexSchema.parse(rawIndex).manifests.filter((descriptor) => {
@@ -76,7 +85,9 @@ export async function statementsForImage(image: string, digest: string, budget?:
     );
   });
   if (descriptors.length > 20) throw new WebhookError(400, "too many SPDX statements");
-  for (const descriptor of descriptors) {
+  const limit = budget ? Math.max(1, Math.floor((budget.remaining - 2) / 5)) : descriptors.length;
+  const selected = descriptors.slice(startDescriptor, startDescriptor + limit);
+  for (const descriptor of selected) {
     const rawManifest = await registryJson(
       new URL(`${base}/manifests/${descriptor.digest}`),
       token,
@@ -111,5 +122,9 @@ export async function statementsForImage(image: string, digest: string, budget?:
   }
   if (sawStatement && statements.length === 0)
     throw new WebhookError(400, "matching statement not found");
-  return statements;
+  return {
+    complete: startDescriptor + selected.length >= descriptors.length,
+    nextDescriptor: startDescriptor + selected.length,
+    statements,
+  };
 }
