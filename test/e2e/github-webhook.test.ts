@@ -108,7 +108,7 @@ describe("GitHub registry package webhook", () => {
     );
     await Promise.all(contexts.map(waitOnExecutionContext));
 
-    expect(responses.map((response) => response.status).sort()).toEqual([200, 202]);
+    expect(responses.map((response) => response.status)).toEqual([202, 202]);
     expect(
       await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
     ).toBe(1);
@@ -163,7 +163,7 @@ describe("GitHub registry package webhook", () => {
     ).toBe(0);
   });
 
-  it.each(["ignored", "index-only", "unattested"] satisfies readonly FailureCase[])(
+  it.each(["ignored", "index-only"] satisfies readonly FailureCase[])(
     "ignores %s package activity",
     async (failure) => {
       const fixture = await githubWebhookFixture(failure);
@@ -177,6 +177,25 @@ describe("GitHub registry package webhook", () => {
       expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(0);
     },
   );
+
+  it("persists an unattested image for scheduled retry", async () => {
+    const visibility = { value: false };
+    const fixture = await githubWebhookFixture(undefined, 200, 789, visibility);
+    const response = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      createExecutionContext(),
+    );
+
+    expect(response.status, await response.clone().text()).toBe(202);
+    expect(await response.json()).toEqual({ status: "pending" });
+    expect(
+      await env.DB.prepare("SELECT status FROM github_ingestion_jobs").first<string>("status"),
+    ).toBe("pending");
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
+    ).toBe(0);
+  });
 
   it("leaves no delivery receipt when GitHub fails transiently", async () => {
     const fixture = await githubWebhookFixture(undefined, 503);

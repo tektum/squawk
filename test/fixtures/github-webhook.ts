@@ -36,6 +36,7 @@ export async function githubWebhookFixture(
   failure?: FailureCase,
   registryStatus = 200,
   packageVersionId = 789,
+  attestationsVisible: { value: boolean } = { value: failure !== "unattested" },
 ): Promise<Fixture> {
   const appKeys = await generateKeyPair("RS256", { extractable: true });
   const component =
@@ -109,7 +110,7 @@ export async function githubWebhookFixture(
     http.get("https://ghcr.io/v2/owner/demo/manifests/:reference", ({ params }) => {
       // biome-ignore lint/complexity/useLiteralKeys: params is an index-signature map.
       const reference = String(params["reference"]);
-      if (failure === "unattested" && reference === `sha256-${INDEX_DIGEST.slice(7)}`)
+      if (!attestationsVisible.value && reference === `sha256-${INDEX_DIGEST.slice(7)}`)
         return HttpResponse.json({ error: "not found" }, { status: 404 });
       if (reference === `sha256-${INDEX_DIGEST.slice(7)}`)
         return HttpResponse.json({
