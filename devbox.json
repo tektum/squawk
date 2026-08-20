@@ -13,7 +13,7 @@
     "gofumpt@0.11.0",
     "golangci-lint@2.12.2",
     "govulncheck@1.7.0",
-    "trivy@0.72.0",
+    "trivy@0.74.0",
     "terraform-docs@0.24.0",
     "tflint@0.64.0"
   ],
