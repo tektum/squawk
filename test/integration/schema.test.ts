@@ -21,6 +21,7 @@ describe("D1 migration contract", () => {
       "dispatch_deliveries",
       "github_sources",
       "github_deliveries",
+      "public_activity",
     ]) {
       expect(tables.results.some((table) => table.name === name)).toBe(true);
     }
@@ -31,6 +32,20 @@ describe("D1 migration contract", () => {
       columns.results
         .map((column) => column.name)
         .some((name) => /name|email|secret|key/i.test(name)),
+    ).toBe(false);
+    const activityColumns = await env.DB.prepare("PRAGMA table_info(public_activity)").all<{
+      readonly name: string;
+    }>();
+    expect(activityColumns.results.map((column) => column.name)).toEqual([
+      "event_sha256",
+      "kind",
+      "outcome",
+      "occurred_at",
+    ]);
+    expect(
+      activityColumns.results
+        .map((column) => column.name)
+        .some((name) => /name|email|secret|key|payload|request|response|error/i.test(name)),
     ).toBe(false);
     await expect(
       env.DB.prepare(

@@ -1,3 +1,4 @@
+import { recordActivity } from "./activity";
 import { advisoryMessageSchema, processAdvisory } from "./advisory";
 import { app } from "./app";
 import { runScheduled } from "./scheduled";
@@ -29,8 +30,10 @@ export default {
           message: advisoryMessageSchema.parse(message.body),
           osvBaseUrl: env.OSV_BASE_URL,
         });
+        await recordActivity(env.DB, "advisory", "completed");
         message.ack();
       } catch {
+        await recordActivity(env.DB, "advisory", "failed");
         message.retry({ delaySeconds: 60 });
       }
     }

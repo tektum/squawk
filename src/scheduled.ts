@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { recordActivity } from "./activity";
 import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
 import { SubrequestBudget } from "./budget";
 import { dispatchPending } from "./dispatch";
-import { ingestPendingImage, type IngestionJob } from "./webhook-ingestion";
 import { discoverAdvisories, requeueAdvisoryJobs } from "./sync";
+import { type IngestionJob, ingestPendingImage } from "./webhook-ingestion";
 
 type ScheduledEnv = Parameters<typeof dispatchPending>[0] &
   Parameters<typeof ingestPendingImage>[0] & {
@@ -14,6 +15,16 @@ type ScheduledEnv = Parameters<typeof dispatchPending>[0] &
   };
 
 export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise<void> {
+  try {
+    await executeScheduled(env, now);
+    await recordActivity(env.DB, "cron", "completed", now);
+  } catch (error) {
+    await recordActivity(env.DB, "cron", "failed", now);
+    throw error;
+  }
+}
+
+async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
   const budget = new SubrequestBudget(45);
   const ingestions = await env.DB.prepare(
     "SELECT delivery_id,deployment_id,installation_id,repository_id,logical_image_ref,next_descriptor,subject_digest FROM github_ingestion_jobs WHERE status IN ('pending','failed') ORDER BY COALESCE(attempted_at,0),created_at LIMIT 10",
