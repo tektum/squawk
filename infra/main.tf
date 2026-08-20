@@ -25,14 +25,6 @@ variable "environment" {
   }
 }
 variable "worker_bundle_path" { type = string }
-variable "descope_issuer" {
-  type    = string
-  default = ""
-}
-variable "descope_discovery_url" {
-  type    = string
-  default = ""
-}
 variable "descope_audience" {
   type    = string
   default = ""
@@ -59,13 +51,11 @@ variable "dispatch_enabled" {
 }
 
 locals {
-  worker_name           = "squawk-${var.environment}"
-  descope_enabled       = var.descope_project_id != "" && var.descope_tenant_id != "" && var.descope_audience != ""
-  descope_issuer        = coalesce(var.descope_issuer, "https://squawk.invalid")
-  descope_discovery_url = coalesce(var.descope_discovery_url, "https://squawk.invalid/.well-known/openid-configuration")
-  advisory_queue_name   = "${local.worker_name}-osv-advisories"
-  advisory_dlq_name     = "${local.worker_name}-osv-advisories-dlq"
-  descope_audience      = var.descope_audience
+  worker_name         = "squawk-${var.environment}"
+  descope_enabled     = var.descope_project_id != "" && var.descope_tenant_id != "" && var.descope_audience != ""
+  advisory_queue_name = "${local.worker_name}-osv-advisories"
+  advisory_dlq_name   = "${local.worker_name}-osv-advisories-dlq"
+  descope_audience    = var.descope_audience
   worker_modules = concat(
     [{ name = basename(var.worker_bundle_path), content_file = var.worker_bundle_path, content_type = "application/javascript+module" }],
     [for name in fileset(dirname(var.worker_bundle_path), "*.wasm") : {
@@ -78,8 +68,7 @@ locals {
     { name = "DB", type = "d1", database_id = cloudflare_d1_database.squawk.id },
     { name = "DISPATCH_ENABLED", type = "plain_text", text = tostring(var.dispatch_enabled) },
     { name = "DESCOPE_AUDIENCE", type = "plain_text", text = local.descope_audience },
-    { name = "DESCOPE_DISCOVERY_URL", type = "plain_text", text = local.descope_discovery_url },
-    { name = "DESCOPE_ISSUER", type = "plain_text", text = local.descope_issuer },
+    { name = "DESCOPE_PROJECT_ID", type = "plain_text", text = var.descope_project_id },
     { name = "OSV_API_URL", type = "plain_text", text = var.osv_api_url },
     { name = "OSV_BASE_URL", type = "plain_text", text = var.osv_base_url },
     { name = "OSV_ADVISORY_JOBS", type = "queue", queue_name = cloudflare_queue.osv_advisories.queue_name }

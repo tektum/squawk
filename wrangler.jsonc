@@ -30,15 +30,18 @@
   "vars": {
     "DISPATCH_ENABLED": "true",
     "DESCOPE_AUDIENCE": "https://squawk.invalid/audience",
-    "DESCOPE_ISSUER": "https://squawk.invalid",
-    "DESCOPE_DISCOVERY_URL": "https://squawk.invalid/.well-known/openid-configuration",
+    "DESCOPE_PROJECT_ID": "P0000000000000000000000000000",
     "OSV_API_URL": "https://api.osv.dev",
     "OSV_BASE_URL": "https://storage.googleapis.com/osv-vulnerabilities"
   },
   "env": {
     "staging": {
       "name": "squawk-staging",
-      "vars": { "DISPATCH_ENABLED": "true" },
+      "vars": {
+        "DESCOPE_AUDIENCE": "https://squawk.invalid/audience",
+        "DESCOPE_PROJECT_ID": "P0000000000000000000000000000",
+        "DISPATCH_ENABLED": "true"
+      },
       "queues": {
         "producers": [{ "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-staging-osv-advisories" }],
         "consumers": [
@@ -56,7 +59,11 @@
     },
     "production": {
       "name": "squawk-production",
-      "vars": { "DISPATCH_ENABLED": "true" },
+      "vars": {
+        "DESCOPE_AUDIENCE": "https://squawk.invalid/audience",
+        "DESCOPE_PROJECT_ID": "P0000000000000000000000000000",
+        "DISPATCH_ENABLED": "true"
+      },
       "queues": {
         "producers": [
           { "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-production-osv-advisories" }

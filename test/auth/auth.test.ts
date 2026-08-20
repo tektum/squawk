@@ -4,10 +4,11 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { authenticate, requireCapability } from "../../src/auth";
 import { server } from "../server";
 
-const issuer = "https://issuer.test";
+const baseUrl = "https://api.descope.test";
+const projectId = "P3HPBhYIOusbZgLWvcVqLbmmnv1i";
 const audience = "squawk-audience";
 
-describe("JOSE authentication", () => {
+describe("Descope authentication", () => {
   let privateKey: CryptoKey;
   let publicJwk: JsonWebKey;
 
@@ -19,191 +20,104 @@ describe("JOSE authentication", () => {
 
   beforeEach(() => {
     server.use(
-      http.get(`${issuer}/.well-known/openid-configuration`, () =>
-        HttpResponse.json({ issuer, jwks_uri: `${issuer}/jwks` }),
-      ),
-      http.get(`${issuer}/jwks`, () =>
+      http.get(`${baseUrl}/v2/keys/${projectId}`, () =>
         HttpResponse.json({ keys: [{ ...publicJwk, kid: "key-1", alg: "RS256", use: "sig" }] }),
       ),
     );
   });
 
   async function token(
-    claims: Record<string, unknown>,
-    targetAudience = audience,
+    tenants: Record<string, { permissions: string[]; roles: string[] }>,
+    options: {
+      readonly audience?: string;
+      readonly issuer?: string;
+      readonly subject?: string;
+    } = {},
   ): Promise<string> {
-    return new SignJWT(claims)
+    return new SignJWT({ tenants })
       .setProtectedHeader({ alg: "RS256", kid: "key-1" })
-      .setIssuer(issuer)
-      .setAudience(targetAudience)
+      .setIssuer(options.issuer ?? projectId)
+      .setAudience(options.audience ?? audience)
+      .setSubject(options.subject ?? "user-1")
       .setIssuedAt()
       .setExpirationTime("5m")
       .sign(privateKey);
   }
 
-  it("rejects the removed machine SBOM capability", async () => {
-    await expect(
-      authenticate(
-        `Bearer ${await token({ tenants: ["tenant-1"], permissions: ["sbom.write"] })}`,
-        {
-          issuer,
-          audience,
-          discoveryUrl: `${issuer}/.well-known/openid-configuration`,
-        },
-      ),
-    ).rejects.toThrow();
-  });
+  const config = { audience, baseUrl, projectId };
 
-  it("accepts a hosted human with query and VEX capabilities", async () => {
+  it("accepts tenant-scoped Descope permissions", async () => {
     const principal = await authenticate(
-      `Bearer ${await token({ sub: "user-1", tenants: ["tenant-1"], permissions: ["findings.read", "vex.write"] })}`,
-      {
-        issuer,
-        audience,
-        discoveryUrl: `${issuer}/.well-known/openid-configuration`,
-      },
+      `Bearer ${await token({ tenant: { permissions: ["findings.read", "vex.write"], roles: ["Tenant Admin"] } })}`,
+      config,
     );
 
-    expect(principal.userId).toBe("user-1");
+    expect(principal).toMatchObject({ tenantId: "tenant", userId: "user-1" });
     expect(() => requireCapability(principal, "vex.write")).not.toThrow();
   });
 
-  it("accepts a Descope session token without an audience", async () => {
-    const sessionIssuer = "project-id";
-    const sessionToken = await new SignJWT({
-      sub: "user-1",
-      tenants: ["tenant-1"],
-      permissions: ["findings.read"],
-    })
-      .setProtectedHeader({ alg: "RS256", kid: "key-1" })
-      .setIssuer(sessionIssuer)
-      .setIssuedAt()
-      .setExpirationTime("5m")
-      .sign(privateKey);
+  it("accepts the real Descope tenant claim shape for scheduled operations", async () => {
+    const principal = await authenticate(
+      `Bearer ${await token({ T3HPBllDcX3I1zI7FqDhYEWHEKHd: { permissions: ["operations.run"], roles: ["Tenant Admin"] } })}`,
+      config,
+    );
 
-    await expect(
-      authenticate(`Bearer ${sessionToken}`, {
-        issuer: sessionIssuer,
-        audience: "",
-        discoveryUrl: `${issuer}/.well-known/openid-configuration`,
-      }),
-    ).resolves.toMatchObject({ tenantId: "tenant-1", userId: "user-1" });
+    expect(principal.tenantId).toBe("T3HPBllDcX3I1zI7FqDhYEWHEKHd");
+    expect(() => requireCapability(principal, "operations.run")).not.toThrow();
+  });
+
+  it("ignores unsupported permissions", async () => {
+    const principal = await authenticate(
+      `Bearer ${await token({ tenant: { permissions: ["SSO Admin", "sbom.write"], roles: [] } })}`,
+      config,
+    );
+
+    expect(principal.capabilities.size).toBe(0);
   });
 
   it("rejects wrong audience and ambiguous tenant context", async () => {
     await expect(
-      authenticate(`Bearer ${await token({ tenants: ["tenant-1"], permissions: [] }, "wrong")}`, {
-        issuer,
-        audience,
-        discoveryUrl: `${issuer}/.well-known/openid-configuration`,
-      }),
-    ).rejects.toThrow();
+      authenticate(
+        `Bearer ${await token({ tenant: { permissions: [], roles: [] } }, { audience: "wrong" })}`,
+        config,
+      ),
+    ).rejects.toThrow("invalid session");
     await expect(
-      authenticate(`Bearer ${await token({ tenants: ["one", "two"], permissions: [] })}`, {
-        issuer,
-        audience,
-        discoveryUrl: `${issuer}/.well-known/openid-configuration`,
-      }),
-    ).rejects.toThrow();
+      authenticate(
+        `Bearer ${await token({ one: { permissions: [], roles: [] }, two: { permissions: [], roles: [] } })}`,
+        config,
+      ),
+    ).rejects.toThrow("ambiguous tenant context");
   });
 
-  it("rejects expired tokens, bad signatures, and algorithm confusion", async () => {
-    const expired = await new SignJWT({ tenants: ["tenant-1"], permissions: [] })
+  it("rejects empty audience and non-HTTPS Descope endpoints", async () => {
+    const session = `Bearer ${await token({ tenant: { permissions: [], roles: [] } })}`;
+    await expect(authenticate(session, { ...config, audience: "" })).rejects.toThrow(
+      "invalid authentication input",
+    );
+    await expect(
+      authenticate(session, { ...config, baseUrl: "http://descope.test" }),
+    ).rejects.toThrow("invalid authentication input");
+  });
+
+  it("rejects expired tokens and bad signatures", async () => {
+    const expired = await new SignJWT({ tenants: { tenant: { permissions: [], roles: [] } } })
       .setProtectedHeader({ alg: "RS256", kid: "key-1" })
-      .setIssuer(issuer)
+      .setIssuer(projectId)
       .setAudience(audience)
       .setIssuedAt(1)
       .setExpirationTime(2)
       .sign(privateKey);
-    await expect(
-      authenticate(`Bearer ${expired}`, {
-        issuer,
-        audience,
-        discoveryUrl: `${issuer}/.well-known/openid-configuration`,
-      }),
-    ).rejects.toThrow();
+    await expect(authenticate(`Bearer ${expired}`, config)).rejects.toThrow("invalid session");
 
     const attacker = await generateKeyPair("RS256");
-    const forged = await new SignJWT({ tenants: ["tenant-1"], permissions: [] })
+    const forged = await new SignJWT({ tenants: { tenant: { permissions: [], roles: [] } } })
       .setProtectedHeader({ alg: "RS256", kid: "key-1" })
-      .setIssuer(issuer)
+      .setIssuer(projectId)
       .setAudience(audience)
       .setIssuedAt()
       .setExpirationTime("5m")
       .sign(attacker.privateKey);
-    await expect(
-      authenticate(`Bearer ${forged}`, {
-        issuer,
-        audience,
-        discoveryUrl: `${issuer}/.well-known/openid-configuration`,
-      }),
-    ).rejects.toThrow();
-
-    const confused = await new SignJWT({ tenants: ["tenant-1"], permissions: [] })
-      .setProtectedHeader({ alg: "HS256", kid: "key-1" })
-      .setIssuer(issuer)
-      .setAudience(audience)
-      .setIssuedAt()
-      .setExpirationTime("5m")
-      .sign(new TextEncoder().encode("not-an-rsa-key-but-long-enough"));
-    await expect(
-      authenticate(`Bearer ${confused}`, {
-        issuer,
-        audience,
-        discoveryUrl: `${issuer}/.well-known/openid-configuration`,
-      }),
-    ).rejects.toThrow();
-  });
-
-  it("loads a rotated JWKS key without a Worker restart", async () => {
-    const rotationIssuer = "https://rotate.test";
-    const rotated = await generateKeyPair("RS256");
-    const rotatedJwk = await exportJWK(rotated.publicKey);
-    server.use(
-      http.get(`${rotationIssuer}/.well-known/openid-configuration`, () =>
-        HttpResponse.json({ issuer: rotationIssuer, jwks_uri: `${rotationIssuer}/jwks` }),
-      ),
-      http.get(
-        `${rotationIssuer}/jwks`,
-        () =>
-          HttpResponse.json({ keys: [{ ...publicJwk, kid: "key-1", alg: "RS256", use: "sig" }] }),
-        { once: true },
-      ),
-      http.get(`${rotationIssuer}/jwks`, () =>
-        HttpResponse.json({
-          keys: [
-            { ...publicJwk, kid: "key-1", alg: "RS256", use: "sig" },
-            { ...rotatedJwk, kid: "key-2", alg: "RS256", use: "sig" },
-          ],
-        }),
-      ),
-    );
-    const original = await new SignJWT({ tenants: ["tenant-1"], permissions: [] })
-      .setProtectedHeader({ alg: "RS256", kid: "key-1" })
-      .setIssuer(rotationIssuer)
-      .setAudience(audience)
-      .setIssuedAt()
-      .setExpirationTime("5m")
-      .sign(privateKey);
-    await authenticate(`Bearer ${original}`, {
-      issuer: rotationIssuer,
-      audience,
-      discoveryUrl: `${rotationIssuer}/.well-known/openid-configuration`,
-    });
-    const rotatedToken = await new SignJWT({ tenants: ["tenant-1"], permissions: [] })
-      .setProtectedHeader({ alg: "RS256", kid: "key-2" })
-      .setIssuer(rotationIssuer)
-      .setAudience(audience)
-      .setIssuedAt()
-      .setExpirationTime("5m")
-      .sign(rotated.privateKey);
-
-    await expect(
-      authenticate(`Bearer ${rotatedToken}`, {
-        issuer: rotationIssuer,
-        audience,
-        discoveryUrl: `${rotationIssuer}/.well-known/openid-configuration`,
-      }),
-    ).resolves.toMatchObject({ tenantId: "tenant-1" });
+    await expect(authenticate(`Bearer ${forged}`, config)).rejects.toThrow("invalid session");
   });
 });

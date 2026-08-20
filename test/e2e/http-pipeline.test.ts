@@ -24,35 +24,32 @@ describe("human HTTP pipeline", () => {
   });
 
   it("queries findings, applies VEX, and retires data with a human principal", async () => {
-    const issuer = "https://pipeline.test";
+    const baseUrl = "https://pipeline.test";
+    const projectId = "pipeline-project";
     const pair = await generateKeyPair("RS256");
     const jwk = await exportJWK(pair.publicKey);
     respond({
-      url: `${issuer}/.well-known/openid-configuration`,
-      status: 200,
-      body: { issuer, jwks_uri: `${issuer}/jwks` },
-    });
-    respond({
-      url: `${issuer}/jwks`,
+      url: `${baseUrl}/v2/keys/${projectId}`,
       status: 200,
       body: { keys: [{ ...jwk, kid: "key", alg: "RS256", use: "sig" }] },
     });
     const token = await new SignJWT({
-      sub: "user",
-      tenants: ["tenant"],
-      permissions: ["sbom.manage", "findings.read", "vex.write"],
+      tenants: {
+        tenant: { permissions: ["sbom.manage", "findings.read", "vex.write"], roles: [] },
+      },
     })
       .setProtectedHeader({ alg: "RS256", kid: "key" })
-      .setIssuer(issuer)
+      .setIssuer(projectId)
       .setAudience("audience")
+      .setSubject("user")
       .setIssuedAt()
       .setExpirationTime("5m")
       .sign(pair.privateKey);
     const bindings = {
       ...env,
-      DESCOPE_ISSUER: issuer,
       DESCOPE_AUDIENCE: "audience",
-      DESCOPE_DISCOVERY_URL: `${issuer}/.well-known/openid-configuration`,
+      DESCOPE_BASE_URL: baseUrl,
+      DESCOPE_PROJECT_ID: projectId,
     };
     const headers = { authorization: `Bearer ${token}` };
     const findings = await worker.fetch(
