@@ -2,28 +2,23 @@ import { z } from "zod";
 import type { SubrequestBudget } from "./budget";
 import { statementSchema, WebhookError } from "./webhook-contract";
 
+const bundleMediaType = "application/vnd.dev.sigstore.bundle.v0.3+json";
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const descriptorSchema = z.object({
-  annotations: z.record(z.string(), z.string()).optional(),
   artifactType: z.string().optional(),
   digest: digestSchema,
   mediaType: z.string().min(1),
 });
-const indexSchema = z.object({ manifests: z.array(descriptorSchema).max(200) });
+const indexSchema = z.object({ manifests: z.array(descriptorSchema).max(500) });
 const artifactManifestSchema = z.object({
-  artifactType: z.literal("application/vnd.dev.sigstore.bundle.v0.3+json"),
+  artifactType: z.literal(bundleMediaType),
   layers: z
-    .array(
-      z.object({
-        digest: digestSchema,
-        mediaType: z.literal("application/vnd.dev.sigstore.bundle.v0.3+json"),
-      }),
-    )
+    .array(z.object({ digest: digestSchema, mediaType: z.literal(bundleMediaType) }))
     .min(1)
     .max(4),
 });
 const bundleSchema = z.object({
-  mediaType: z.literal("application/vnd.dev.sigstore.bundle.v0.3+json"),
+  mediaType: z.literal(bundleMediaType),
   dsseEnvelope: z.object({
     payload: z.string().min(1),
     payloadType: z.literal("application/vnd.in-toto+json"),
@@ -32,12 +27,7 @@ const bundleSchema = z.object({
 });
 const tokenSchema = z.object({ token: z.string().min(1) });
 
-async function registryJson(
-  url: URL,
-  token: string,
-  accept: string,
-  budget?: SubrequestBudget,
-): Promise<unknown> {
+async function registryJson(url: URL, token: string, accept: string, budget?: SubrequestBudget) {
   budget?.take();
   const response = await fetch(url, {
     headers: { accept, authorization: `Bearer ${token}` },
@@ -56,6 +46,7 @@ export async function statementsForImage(
 ): Promise<{
   readonly complete: boolean;
   readonly nextDescriptor: number;
+  readonly sawStatement: boolean;
   readonly statements: readonly z.infer<typeof statementSchema>[];
 }> {
   const imagePath = image.slice("ghcr.io/".length);
@@ -73,43 +64,58 @@ export async function statementsForImage(
     "application/vnd.oci.image.index.v1+json",
     budget,
   );
-  if (!rawIndex) return { complete: true, nextDescriptor: 0, statements: [] };
+  if (!rawIndex)
+    return {
+      complete: false,
+      nextDescriptor: startDescriptor,
+      sawStatement: false,
+      statements: [],
+    };
+  const descriptors = indexSchema
+    .parse(rawIndex)
+    .manifests.filter(
+      (descriptor) =>
+        descriptor.artifactType === bundleMediaType ||
+        descriptor.artifactType === "application/vnd.oci.empty.v1+json",
+    );
+  const requestLimit = budget ? Math.max(0, budget.remaining - 2) : Number.MAX_SAFE_INTEGER;
+  let requests = 0;
+  let nextDescriptor = startDescriptor;
   const statements: z.infer<typeof statementSchema>[] = [];
   let sawStatement = false;
-  const descriptors = indexSchema.parse(rawIndex).manifests.filter((descriptor) => {
-    const predicateType = descriptor.annotations?.["dev.sigstore.bundle.predicateType"];
-    return (
-      predicateType === "https://spdx.dev/Document" ||
-      (!predicateType &&
-        descriptor.artifactType === "application/vnd.dev.sigstore.bundle.v0.3+json")
-    );
-  });
-  if (descriptors.length > 20) throw new WebhookError(400, "too many SPDX statements");
-  const limit = budget ? Math.max(1, Math.floor((budget.remaining - 2) / 5)) : descriptors.length;
-  const selected = descriptors.slice(startDescriptor, startDescriptor + limit);
-  for (const descriptor of selected) {
+  while (nextDescriptor < descriptors.length && requests < requestLimit) {
+    const descriptor = descriptors[nextDescriptor];
+    if (!descriptor) break;
+    if (requests + 1 > requestLimit) break;
     const rawManifest = await registryJson(
       new URL(`${base}/manifests/${descriptor.digest}`),
       token,
       "application/vnd.oci.image.manifest.v1+json",
       budget,
     );
+    requests += 1;
     const manifest = artifactManifestSchema.safeParse(rawManifest);
-    if (!manifest.success) continue;
+    if (!manifest.success) {
+      nextDescriptor += 1;
+      continue;
+    }
+    if (requests + manifest.data.layers.length > requestLimit) break;
     for (const layer of manifest.data.layers) {
       const rawBundle = await registryJson(
         new URL(`${base}/blobs/${layer.digest}`),
         token,
-        "application/vnd.dev.sigstore.bundle.v0.3+json",
+        bundleMediaType,
         budget,
       );
+      requests += 1;
       const bundle = bundleSchema.safeParse(rawBundle);
       if (!bundle.success) continue;
       const bytes = Uint8Array.from(atob(bundle.data.dsseEnvelope.payload), (character) =>
         character.charCodeAt(0),
       );
-      const statement = statementSchema.safeParse(JSON.parse(new TextDecoder().decode(bytes)));
-      if (statement.success) sawStatement = true;
+      const decoded = JSON.parse(new TextDecoder().decode(bytes));
+      const statement = statementSchema.safeParse(decoded);
+      if (decoded?.predicateType === "https://spdx.dev/Document") sawStatement = true;
       if (
         statement.success &&
         statement.data.subject.some(
@@ -119,12 +125,12 @@ export async function statementsForImage(
       )
         statements.push(statement.data);
     }
+    nextDescriptor += 1;
   }
-  if (sawStatement && statements.length === 0)
-    throw new WebhookError(400, "matching statement not found");
   return {
-    complete: startDescriptor + selected.length >= descriptors.length,
-    nextDescriptor: startDescriptor + selected.length,
+    complete: nextDescriptor >= descriptors.length,
+    nextDescriptor,
+    sawStatement,
     statements,
   };
 }

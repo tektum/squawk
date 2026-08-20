@@ -264,9 +264,82 @@ describe("delayed GitHub attestation ingestion", () => {
     );
 
     await expect(
-      env.DB.prepare("SELECT next_descriptor FROM github_ingestion_jobs WHERE subject_digest=?")
-        .bind(`sha256:${"b".repeat(64)}`)
-        .first<number>("next_descriptor"),
-    ).resolves.toBe(8);
+      env.DB.prepare("SELECT COUNT(*) FROM github_ingestion_jobs").first<number>("COUNT(*)"),
+    ).resolves.toBe(0);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)"),
+    ).resolves.toBe(1);
+  });
+
+  it("finds SPDX bundles after unrelated empty referrers", async () => {
+    const fixture = await githubWebhookFixture("mixed-referrers");
+    await env.DB.prepare(
+      "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,created_at) VALUES (?,?,?,?, 'pending',0)",
+    )
+      .bind(
+        `sha256:${"b".repeat(64)}`,
+        String(INSTALLATION_ID),
+        String(REPOSITORY_ID),
+        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+      )
+      .run();
+    await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 2000)").run();
+    const bindings = {
+      ...env,
+      ...fixture.bindings,
+      GH_APP_ID: "",
+      GH_APP_INSTALLATION_ID: "",
+      GH_APP_PRIVATE_KEY: "",
+      OSV_API_URL: "https://api.osv.test",
+      OSV_BASE_URL: "https://osv.test",
+      OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+    };
+
+    for (let now = 2_000; now <= 5_000; now += 1_000) await runScheduled(bindings, now);
+
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM github_ingestion_jobs").first<number>("COUNT(*)"),
+    ).resolves.toBe(0);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)"),
+    ).resolves.toBe(2);
+  });
+
+  it("processes never-attempted jobs before retrying pending peers", async () => {
+    const fixture = await githubWebhookFixture("unattested");
+    const rows = Array.from({ length: 11 }, (_, index) =>
+      env.DB.prepare(
+        "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,attempted_at,created_at) VALUES (?,?,?,?, 'pending',?,?)",
+      ).bind(
+        `sha256:${index.toString(16).padStart(64, "0")}`,
+        String(INSTALLATION_ID),
+        String(REPOSITORY_ID),
+        `ghcr.io/owner/demo@sha256:${index.toString(16).padStart(64, "0")}`,
+        index < 10 ? 1_000 : null,
+        index,
+      ),
+    );
+    await env.DB.batch(rows);
+    await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 2000)").run();
+
+    await runScheduled(
+      {
+        ...env,
+        ...fixture.bindings,
+        GH_APP_ID: "",
+        GH_APP_INSTALLATION_ID: "",
+        GH_APP_PRIVATE_KEY: "",
+        OSV_API_URL: "https://api.osv.test",
+        OSV_BASE_URL: "https://osv.test",
+        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+      },
+      2_000_000,
+    );
+
+    await expect(
+      env.DB.prepare("SELECT attempted_at FROM github_ingestion_jobs WHERE created_at=10").first(
+        "attempted_at",
+      ),
+    ).resolves.toBe(2_000_000);
   });
 });

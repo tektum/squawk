@@ -163,21 +163,29 @@ describe("GitHub registry package webhook", () => {
       await env.DB.prepare("SELECT COUNT(*) FROM github_deliveries").first<number>("COUNT(*)"),
     ).toBe(0);
   });
+  it("ignores deleted package activity", async () => {
+    const fixture = await githubWebhookFixture("ignored");
+    const response = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      createExecutionContext(),
+    );
 
-  it.each(["ignored", "index-only"] satisfies readonly FailureCase[])(
-    "ignores %s package activity",
-    async (failure) => {
-      const fixture = await githubWebhookFixture(failure);
-      const response = await worker.fetch(
-        fixture.request(),
-        { ...env, ...fixture.bindings },
-        createExecutionContext(),
-      );
+    expect(response.status).toBe(204);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(0);
+  });
 
-      expect(response.status).toBe(204);
-      expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(0);
-    },
-  );
+  it("ignores SPDX statements without platform identities", async () => {
+    const fixture = await githubWebhookFixture("index-only");
+    const response = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      createExecutionContext(),
+    );
+
+    expect(response.status).toBe(204);
+    expect(await env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)")).toBe(0);
+  });
 
   it("persists an unattested image for scheduled retry", async () => {
     const visibility = { value: false };
