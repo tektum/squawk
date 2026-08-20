@@ -49,6 +49,13 @@ describe("D1 migration contract", () => {
     ).toBe(false);
     await expect(
       env.DB.prepare(
+        "INSERT INTO public_activity (event_sha256,kind,outcome,occurred_at) VALUES (?,'cron','completed',0)",
+      )
+        .bind(`${"a".repeat(63)}z`)
+        .run(),
+    ).rejects.toThrow();
+    await expect(
+      env.DB.prepare(
         "INSERT INTO components (sbom_id,package_name,ecosystem,version,purl,matchable) VALUES ('missing','x','npm','1','pkg:npm/x@1',1)",
       ).run(),
     ).rejects.toThrow();

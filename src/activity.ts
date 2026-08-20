@@ -29,10 +29,16 @@ export async function recordActivity(
   const eventSha256 = await sha256(
     `${kind}\u0000${outcome}\u0000${occurredAt}\u0000${crypto.randomUUID()}`,
   );
-  await database
-    .prepare("INSERT INTO public_activity (event_sha256,kind,outcome,occurred_at) VALUES (?,?,?,?)")
-    .bind(eventSha256, kind, outcome, occurredAt)
-    .run();
+  try {
+    await database
+      .prepare(
+        "INSERT INTO public_activity (event_sha256,kind,outcome,occurred_at) VALUES (?,?,?,?)",
+      )
+      .bind(eventSha256, kind, outcome, occurredAt)
+      .run();
+  } catch {
+    console.error("Public activity recording failed", { kind, outcome });
+  }
 }
 
 export async function activityResponse(database: D1Database): Promise<Response> {

@@ -1,5 +1,6 @@
 import { createExecutionContext, env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { recordActivity } from "../../src/activity";
 import worker from "../../src/index";
 
 const digest = "a".repeat(64);
@@ -58,5 +59,21 @@ describe("public activity history", () => {
     );
     expect(stored).not.toContain(secret);
     expect(stored).not.toContain("invalid");
+  });
+
+  it("does not fail operations when activity storage is unavailable", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const database = {
+      prepare: () => ({
+        bind: () => ({ run: async () => Promise.reject(new Error("storage unavailable")) }),
+      }),
+    } as unknown as D1Database;
+
+    await expect(recordActivity(database, "cron", "completed", 3000)).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith("Public activity recording failed", {
+      kind: "cron",
+      outcome: "completed",
+    });
+    error.mockRestore();
   });
 });
