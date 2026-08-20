@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { recordActivity } from "./activity";
 import type { SubrequestBudget } from "./budget";
 import { compareVersion } from "./osv/comparator";
 
@@ -72,6 +73,7 @@ export async function backfillSbom(options: BackfillOptions): Promise<void> {
         .prepare("UPDATE sboms SET backfill_status='complete',backfill_error=NULL WHERE id=?")
         .bind(options.sbomId)
         .run();
+      await recordActivity(options.database, "scan", "completed", now);
       return;
     }
     options.budget?.take();
@@ -139,12 +141,14 @@ export async function backfillSbom(options: BackfillOptions): Promise<void> {
       .prepare("UPDATE sboms SET backfill_status='complete',backfill_error=NULL WHERE id=?")
       .bind(options.sbomId)
       .run();
+    await recordActivity(options.database, "scan", "completed", now);
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown backfill error";
     await options.database
       .prepare("UPDATE sboms SET backfill_status='failed',backfill_error=? WHERE id=?")
       .bind(message.slice(0, 500), options.sbomId)
       .run();
+    await recordActivity(options.database, "scan", "failed", now);
     throw error;
   }
 }

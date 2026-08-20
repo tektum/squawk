@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { activityResponse, recordActivity } from "./activity";
 import { AuthenticationError, AuthorizationError, authenticate, requireCapability } from "./auth";
 import { type Principal, SbomIdSchema, TenantIdSchema, vexInputSchema } from "./domain";
 import { inventoryResponse } from "./inventory";
 import { appendVex, listFindings, retireSbom } from "./repository";
-import { handleGithubWebhook, WebhookError } from "./webhook";
 import { runScheduled } from "./scheduled";
+import { handleGithubWebhook, WebhookError } from "./webhook";
 
 export type WorkerBindings = {
   readonly BUILD_SHA?: string;
@@ -36,7 +37,27 @@ app.get("/health", (context) => {
 
 app.get("/", (context) => inventoryResponse(context.req.raw, context.env.DB));
 
-app.post("/webhooks/github", (context) => handleGithubWebhook(context.req.raw, context.env));
+app.get("/activity", (context) => activityResponse(context.env.DB));
+
+app.post("/webhooks/github", async (context) => {
+  try {
+    const response = await handleGithubWebhook(context.req.raw, context.env);
+    const outcome =
+      response.status === 204
+        ? "ignored"
+        : response.status === 200
+          ? "accepted"
+          : ((await response.clone().json<{ status?: string }>()).status ?? "pending") ===
+              "accepted"
+            ? "accepted"
+            : "pending";
+    await recordActivity(context.env.DB, "webhook", outcome);
+    return response;
+  } catch (error) {
+    await recordActivity(context.env.DB, "webhook", "failed");
+    throw error;
+  }
+});
 
 app.use("/v1/*", async (context, next) => {
   const principal = await authenticate(context.req.header("Authorization"), {

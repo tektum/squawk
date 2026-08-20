@@ -136,7 +136,7 @@ function renderInventory(model: {
   <section><div class="section-title"><h2>Images</h2><span>${model.images.length} shown</span></div><div class="images">${imageRows || empty("No images match this filter.")}</div></section>
   <section><div class="section-title"><h2>Packages</h2><span>${model.packages.length} shown</span></div><div class="table-wrap"><table><thead><tr><th>Ecosystem</th><th>Package</th><th>Version</th><th class="num">Images</th></tr></thead>
   <tbody>${packageRows || `<tr><td colspan="4">${empty("No packages match this filter.")}</td></tr>`}</tbody></table></div></section>
-  <footer>Squawk · immutable image inventory · <a href="/health">system health</a></footer></main></body></html>`;
+  <footer>Squawk · immutable image inventory · <a href="/activity">activity history</a> · <a href="/health">system health</a></footer></main></body></html>`;
 }
 
 function empty(message: string): string {
