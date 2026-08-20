@@ -13,6 +13,7 @@ type ScheduledEnv = Parameters<typeof dispatchPending>[0] &
     readonly OSV_BASE_URL: string;
     readonly OSV_ADVISORY_JOBS: Queue;
   };
+const ingestionRetryDelayMilliseconds = 15 * 60_000;
 
 export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise<void> {
   try {
@@ -27,16 +28,18 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
 async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
   const budget = new SubrequestBudget(45);
   const ingestions = await env.DB.prepare(
-    "SELECT delivery_id,deployment_id,installation_id,repository_id,logical_image_ref,next_descriptor,subject_digest FROM github_ingestion_jobs WHERE status IN ('pending','failed') ORDER BY COALESCE(attempted_at,0),created_at LIMIT 10",
-  ).all<{
-    readonly delivery_id: string | null;
-    readonly deployment_id: string | null;
-    readonly installation_id: string;
-    readonly repository_id: string;
-    readonly logical_image_ref: string;
-    readonly next_descriptor: number;
-    readonly subject_digest: string;
-  }>();
+    "SELECT delivery_id,deployment_id,installation_id,repository_id,logical_image_ref,next_descriptor,subject_digest FROM github_ingestion_jobs WHERE status IN ('pending','failed') AND (attempted_at IS NULL OR attempted_at<=?) ORDER BY CASE WHEN attempted_at IS NULL THEN 0 ELSE 1 END,attempted_at,created_at LIMIT 10",
+  )
+    .bind(now - ingestionRetryDelayMilliseconds)
+    .all<{
+      readonly delivery_id: string | null;
+      readonly deployment_id: string | null;
+      readonly installation_id: string;
+      readonly repository_id: string;
+      readonly logical_image_ref: string;
+      readonly next_descriptor: number;
+      readonly subject_digest: string;
+    }>();
   for (const row of ingestions.results) {
     if (budget.remaining <= 8) break;
     const job: IngestionJob = {

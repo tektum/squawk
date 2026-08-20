@@ -15,6 +15,7 @@ export type FailureCase =
   | "ignored"
   | "index-only"
   | "installation"
+  | "mixed-referrers"
   | "many-attestations"
   | "noisy-index"
   | "predicate"
@@ -119,20 +120,29 @@ export async function githubWebhookFixture(
         return HttpResponse.json({
           schemaVersion: 2,
           manifests: [
-            ...(failure === "noisy-index"
-              ? Array.from({ length: 21 }, (_, index) => ({
+            ...(failure === "mixed-referrers"
+              ? Array.from({ length: 25 }, (_, index) => ({
                   artifactType: "application/vnd.oci.empty.v1+json",
-                  digest: `sha256:${index.toString(16).padStart(64, "0")}`,
+                  digest: `sha256:${(index + 1).toString(16).padStart(64, "0")}`,
                   mediaType: "application/vnd.oci.image.manifest.v1+json",
                 }))
-              : []),
+              : failure === "noisy-index"
+                ? Array.from({ length: 21 }, (_, index) => ({
+                    artifactType: "application/vnd.oci.empty.v1+json",
+                    digest: `sha256:${index.toString(16).padStart(64, "0")}`,
+                    mediaType: "application/vnd.oci.image.manifest.v1+json",
+                  }))
+                : []),
             ...(failure === "many-attestations"
               ? Array.from({ length: 10 }, () => primaryAttestation)
               : failure === "duplicates"
                 ? [...attestations, ...attestations]
                 : attestations
             ).map((attestation) => ({
-              artifactType: "application/vnd.dev.sigstore.bundle.v0.3+json",
+              artifactType:
+                failure === "mixed-referrers"
+                  ? "application/vnd.oci.empty.v1+json"
+                  : "application/vnd.dev.sigstore.bundle.v0.3+json",
               digest: attestation.manifestDigest,
               mediaType: "application/vnd.oci.image.manifest.v1+json",
             })),
