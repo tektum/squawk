@@ -46,6 +46,7 @@ export async function statementsForImage(
 ): Promise<{
   readonly complete: boolean;
   readonly nextDescriptor: number;
+  readonly sawStatement: boolean;
   readonly statements: readonly z.infer<typeof statementSchema>[];
 }> {
   const imagePath = image.slice("ghcr.io/".length);
@@ -63,7 +64,13 @@ export async function statementsForImage(
     "application/vnd.oci.image.index.v1+json",
     budget,
   );
-  if (!rawIndex) return { complete: false, nextDescriptor: startDescriptor, statements: [] };
+  if (!rawIndex)
+    return {
+      complete: false,
+      nextDescriptor: startDescriptor,
+      sawStatement: false,
+      statements: [],
+    };
   const descriptors = indexSchema
     .parse(rawIndex)
     .manifests.filter(
@@ -120,11 +127,10 @@ export async function statementsForImage(
     }
     nextDescriptor += 1;
   }
-  if (sawStatement && statements.length === 0)
-    throw new WebhookError(400, "matching statement not found");
   return {
     complete: nextDescriptor >= descriptors.length,
     nextDescriptor,
+    sawStatement,
     statements,
   };
 }

@@ -14,6 +14,7 @@ export type IngestionJob = {
   readonly image: string;
   readonly installationId: string;
   readonly nextDescriptor?: number;
+  readonly sawSpdx?: boolean;
   readonly repositoryId: string;
   readonly subjectDigest: string;
 };
@@ -73,16 +74,25 @@ export async function ingestPendingImage(
     budget,
     job.nextDescriptor,
   );
+  const sawSpdx = (job.sawSpdx ?? false) || registry.sawStatement;
   const statements = registry.statements;
   if (statements.length === 0) {
     if (!registry.complete) {
       await env.DB.prepare(
-        "UPDATE github_ingestion_jobs SET next_descriptor=?,status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
+        "UPDATE github_ingestion_jobs SET next_descriptor=?,saw_spdx=?,status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
       )
-        .bind(registry.nextDescriptor, now, job.installationId, job.repositoryId, job.subjectDigest)
+        .bind(
+          registry.nextDescriptor,
+          sawSpdx ? 1 : 0,
+          now,
+          job.installationId,
+          job.repositoryId,
+          job.subjectDigest,
+        )
         .run();
       return "pending" as const;
     }
+    if (sawSpdx) throw new WebhookError(400, "matching statement not found");
     const ingested = await env.DB.prepare(
       "SELECT 1 FROM sboms WHERE logical_image_ref=? AND retired_at IS NULL LIMIT 1",
     )
@@ -121,9 +131,16 @@ export async function ingestPendingImage(
   if (platformRequests.length === 0) {
     if (!registry.complete) {
       await env.DB.prepare(
-        "UPDATE github_ingestion_jobs SET next_descriptor=?,status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
+        "UPDATE github_ingestion_jobs SET next_descriptor=?,saw_spdx=?,status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
       )
-        .bind(registry.nextDescriptor, now, job.installationId, job.repositoryId, job.subjectDigest)
+        .bind(
+          registry.nextDescriptor,
+          sawSpdx ? 1 : 0,
+          now,
+          job.installationId,
+          job.repositoryId,
+          job.subjectDigest,
+        )
         .run();
       return "pending" as const;
     }
@@ -146,9 +163,16 @@ export async function ingestPendingImage(
   if (result.kind === "conflict") throw new WebhookError(409, "conflicting platform submission");
   if (!registry.complete) {
     await env.DB.prepare(
-      "UPDATE github_ingestion_jobs SET next_descriptor=?,status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
+      "UPDATE github_ingestion_jobs SET next_descriptor=?,saw_spdx=?,status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
     )
-      .bind(registry.nextDescriptor, now, job.installationId, job.repositoryId, job.subjectDigest)
+      .bind(
+        registry.nextDescriptor,
+        sawSpdx ? 1 : 0,
+        now,
+        job.installationId,
+        job.repositoryId,
+        job.subjectDigest,
+      )
       .run();
     return "pending" as const;
   }

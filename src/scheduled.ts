@@ -28,7 +28,7 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
 async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
   const budget = new SubrequestBudget(45);
   const ingestions = await env.DB.prepare(
-    "SELECT delivery_id,deployment_id,installation_id,repository_id,logical_image_ref,next_descriptor,subject_digest FROM github_ingestion_jobs WHERE status IN ('pending','failed') AND (attempted_at IS NULL OR attempted_at<=?) ORDER BY CASE WHEN attempted_at IS NULL THEN 0 ELSE 1 END,attempted_at,created_at LIMIT 10",
+    "SELECT delivery_id,deployment_id,installation_id,repository_id,logical_image_ref,next_descriptor,saw_spdx,subject_digest FROM github_ingestion_jobs WHERE status IN ('pending','failed') AND (attempted_at IS NULL OR attempted_at<=?) ORDER BY CASE WHEN attempted_at IS NULL THEN 0 ELSE 1 END,attempted_at,created_at LIMIT 10",
   )
     .bind(now - ingestionRetryDelayMilliseconds)
     .all<{
@@ -38,6 +38,7 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
       readonly repository_id: string;
       readonly logical_image_ref: string;
       readonly next_descriptor: number;
+      readonly saw_spdx: number;
       readonly subject_digest: string;
     }>();
   for (const row of ingestions.results) {
@@ -49,6 +50,7 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
       nextDescriptor: row.next_descriptor,
       installationId: row.installation_id,
       repositoryId: row.repository_id,
+      sawSpdx: row.saw_spdx === 1,
       subjectDigest: row.subject_digest,
     };
     try {
