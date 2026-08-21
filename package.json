@@ -37,6 +37,6 @@
     "msw": "2.15.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11",
-    "wrangler": "4.123.0"
+    "wrangler": "4.124.0"
   }
 }
