@@ -3,9 +3,11 @@ import { z } from "zod";
 import { activityResponse, recordActivity } from "./activity";
 import { AuthenticationError, AuthorizationError, authenticate, requireCapability } from "./auth";
 import { type Principal, SbomIdSchema, TenantIdSchema, vexInputSchema } from "./domain";
+import { safeIssues } from "./error-detail";
 import { inventoryResponse } from "./inventory";
 import { appendVex, listFindings, retireSbom } from "./repository";
 import { runScheduled } from "./scheduled";
+import { PredicateError } from "./sbom";
 import { handleGithubWebhook, WebhookError } from "./webhook";
 
 export type WorkerBindings = {
@@ -134,8 +136,12 @@ app.onError((error, context) => {
   if (error instanceof AuthenticationError) return context.json({ error: "unauthorized" }, 401);
   if (error instanceof AuthorizationError) return context.json({ error: "forbidden" }, 403);
   if (error instanceof WebhookError) return context.json({ error: error.message }, error.status);
+  if (error instanceof PredicateError) {
+    console.warn("Invalid SBOM predicate", { message: error.message });
+    return context.json({ error: "invalid request" }, 400);
+  }
   if (error instanceof z.ZodError) {
-    console.warn("Invalid request", { issues: error.issues });
+    console.warn("Invalid request", { issues: safeIssues(error.issues) });
     return context.json({ error: "invalid request" }, 400);
   }
   console.error("Unhandled request error", {
