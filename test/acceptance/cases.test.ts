@@ -4,7 +4,7 @@ import { SubrequestBudget } from "../../src/budget";
 import { CapabilitySchema, SbomIdSchema, TenantIdSchema, UserIdSchema } from "../../src/domain";
 import { compareVersion } from "../../src/osv/comparator";
 import { appendVex, listFindings, retireSbom } from "../../src/repository";
-import { parsePredicate, sbomInputSchema } from "../../src/sbom";
+import { parsePredicate, PredicateError, sbomInputSchema } from "../../src/sbom";
 import { discoverAdvisories } from "../../src/sync";
 import { respond } from "../http";
 
@@ -116,6 +116,16 @@ const cases: readonly AcceptanceCase[] = [
       ).toThrow(),
   ],
   ["R2-5", () => expect(() => parsePredicate({ bomFormat: "not-an-sbom" })).toThrow()],
+  [
+    "R2-6",
+    () =>
+      expect(() =>
+        parsePredicate({
+          bomFormat: "CycloneDX",
+          components: [{ name: "p", version: "1", purl: "pkg:npm/%@1" }],
+        }),
+      ).toThrow(PredicateError),
+  ],
   [
     "R3-1",
     async () =>

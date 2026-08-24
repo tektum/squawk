@@ -89,7 +89,12 @@ function parsePurl(purl: string): {
   const rawPackageName = packagePath?.split("/").at(-1);
   if (!purlType || !rawPackageName)
     throw new PredicateError(`purl ${purl} missing package type or name`);
-  const packageName = decodeURIComponent(rawPackageName);
+  let packageName: string;
+  try {
+    packageName = decodeURIComponent(rawPackageName);
+  } catch {
+    throw new PredicateError(`purl ${purl} has invalid percent encoding`);
+  }
   const ecosystem = purlEcosystems[purlType];
   return ecosystem
     ? { packageName, ecosystem, matchable: true }
