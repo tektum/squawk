@@ -78,9 +78,7 @@ export function imageIdentityFromPredicate(predicate: unknown) {
   };
 }
 
-const purlEcosystems: Readonly<Record<string, string>> = {
-  apk: "Alpine",
-  deb: "Debian",
+const languageEcosystems: Readonly<Record<string, string>> = {
   golang: "Go",
   maven: "Maven",
   npm: "npm",
@@ -89,8 +87,40 @@ const purlEcosystems: Readonly<Record<string, string>> = {
   gem: "RubyGems",
   cargo: "crates.io",
 };
+/** OSV tracks apk distributions separately: Wolfi and Chainguard are not Alpine. */
+const apkEcosystems: Readonly<Record<string, string>> = {
+  chainguard: "Chainguard",
+  wolfi: "Wolfi",
+};
+const alpineRelease = /(?:^|-)(\d+\.\d+)/;
+const debianRelease = /(?:^|-)(\d+)/;
 
-function parsePurl(purl: string): {
+function ecosystemFor(
+  purlType: string,
+  namespace: string | undefined,
+  distro: string | undefined,
+): { readonly ecosystem: string; readonly matchable: boolean } {
+  const language = languageEcosystems[purlType];
+  if (language) return { ecosystem: language, matchable: true };
+  const distribution = namespace?.toLowerCase();
+  if (purlType === "apk") {
+    const rolling = distribution === undefined ? undefined : apkEcosystems[distribution];
+    if (rolling) return { ecosystem: rolling, matchable: true };
+    const release = distribution === "alpine" ? alpineRelease.exec(distro ?? "")?.[1] : undefined;
+    // OSV publishes Alpine advisories per release and answers nothing for a bare
+    // "Alpine" ecosystem, so an unresolved release must not look matchable.
+    return release
+      ? { ecosystem: `Alpine:v${release}`, matchable: true }
+      : { ecosystem: "unknown:apk", matchable: false };
+  }
+  if (purlType === "deb") {
+    const release = distribution === "debian" ? debianRelease.exec(distro ?? "")?.[1] : undefined;
+    return { ecosystem: release ? `Debian:${release}` : "Debian", matchable: true };
+  }
+  return { ecosystem: `unknown:${purlType}`, matchable: false };
+}
+
+export function parsePurl(purl: string): {
   readonly packageName: string;
   readonly ecosystem: string;
   readonly matchable: boolean;
@@ -98,18 +128,21 @@ function parsePurl(purl: string): {
   const match = /^pkg:([^/]+)\/(.+)@/.exec(purl);
   if (!match) throw new PredicateError("unparsable purl");
   const [, purlType, packagePath] = match;
-  const rawPackageName = packagePath?.split("/").at(-1);
-  if (!purlType || !rawPackageName) throw new PredicateError("purl missing package type or name");
+  const segments = packagePath?.split("/");
+  const rawPackageName = segments?.at(-1);
+  if (!purlType || !segments || !rawPackageName)
+    throw new PredicateError("purl missing package type or name");
   let packageName: string;
   try {
     packageName = decodeURIComponent(rawPackageName);
   } catch {
     throw new PredicateError("purl has invalid percent encoding");
   }
-  const ecosystem = purlEcosystems[purlType];
-  return ecosystem
-    ? { packageName, ecosystem, matchable: true }
-    : { packageName, ecosystem: `unknown:${purlType}`, matchable: false };
+  const qualifiers = new URLSearchParams(purl.split("#")[0]?.split("?")[1] ?? "");
+  return {
+    packageName,
+    ...ecosystemFor(purlType, segments.at(-2), qualifiers.get("distro") ?? undefined),
+  };
 }
 
 function componentFrom(purl: string, version: string): Component {

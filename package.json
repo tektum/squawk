@@ -16,6 +16,7 @@
     "test:matcher": "cd matcher && go test -race -shuffle=on -count=1 ./...",
     "build:matcher": "bash matcher/build.sh",
     "types": "wrangler types",
+    "reconcile:ecosystems": "bun scripts/reconcile-ecosystems.ts",
     "reconcile:github": "bun scripts/reconcile-github-images.ts",
     "reconcile:tenant": "bun scripts/reconcile-tenant.ts",
     "check:types": "wrangler types && wrangler types --check",
