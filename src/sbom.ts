@@ -1,6 +1,13 @@
 import { z } from "zod";
 import type { Component } from "./domain";
 
+export class PredicateError extends Error {
+  constructor(message: string) {
+    super(`invalid SBOM predicate: ${message}`);
+    this.name = "PredicateError";
+  }
+}
+
 const maxComponents = 200;
 const purlSchema = z.string().startsWith("pkg:");
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -77,10 +84,11 @@ function parsePurl(purl: string): {
   readonly matchable: boolean;
 } {
   const match = /^pkg:([^/]+)\/(.+)@/.exec(purl);
-  if (!match) throw new z.ZodError([]);
+  if (!match) throw new PredicateError(`unparsable purl ${purl}`);
   const [, purlType, packagePath] = match;
   const rawPackageName = packagePath?.split("/").at(-1);
-  if (!purlType || !rawPackageName) throw new z.ZodError([]);
+  if (!purlType || !rawPackageName)
+    throw new PredicateError(`purl ${purl} missing package type or name`);
   const packageName = decodeURIComponent(rawPackageName);
   const ecosystem = purlEcosystems[purlType];
   return ecosystem
@@ -103,10 +111,11 @@ export function parsePredicate(predicate: unknown): readonly Component[] {
           ? [componentFrom(purlSchema.parse(reference.referenceLocator), pkg.versionInfo)]
           : [];
       });
-  if (components.length === 0) throw new z.ZodError([]);
+  if (components.length === 0) throw new PredicateError("no package components found");
   const identities = new Set(
     components.map((component) => `${component.purl}\u0000${component.version}`),
   );
-  if (identities.size !== components.length) throw new z.ZodError([]);
+  if (identities.size !== components.length)
+    throw new PredicateError("duplicate package identity in predicate");
   return components;
 }

@@ -15,6 +15,16 @@ type ScheduledEnv = Parameters<typeof dispatchPending>[0] &
   };
 const ingestionRetryDelayMilliseconds = 15 * 60_000;
 
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    const issues = "issues" in error ? (error.issues as unknown) : undefined;
+    return issues === undefined
+      ? `${error.name}: ${error.message}`
+      : `${error.name}: ${JSON.stringify(issues).slice(0, 1_500)}`;
+  }
+  return typeof error === "string" ? error : (JSON.stringify(error) ?? "unknown error");
+}
+
 export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise<void> {
   try {
     await executeScheduled(env, now);
@@ -62,13 +72,12 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
           .bind(now, row.installation_id, row.repository_id, row.subject_digest)
           .run();
     } catch (error) {
-      if (!(error instanceof Error)) throw error;
       await env.DB.prepare(
         "UPDATE github_ingestion_jobs SET status='failed',attempted_at=?,error=? WHERE installation_id=? AND repository_id=? AND subject_digest=?",
       )
         .bind(
           now,
-          error.message.slice(0, 200),
+          describeError(error).slice(0, 200),
           row.installation_id,
           row.repository_id,
           row.subject_digest,
@@ -76,7 +85,7 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
         .run();
       console.error("Scheduled GitHub ingestion failed", {
         subjectDigest: row.subject_digest,
-        error,
+        error: describeError(error),
       });
     }
   }
@@ -96,32 +105,37 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
         budget,
       });
     } catch (error) {
-      if (!(error instanceof Error)) throw error;
-      console.error("Scheduled backfill failed", { sbomId: id, error });
+      console.error("Scheduled backfill failed", { sbomId: id, error: describeError(error) });
     }
   }
   const cache = await env.DB.prepare(
     "SELECT MAX(cached_at) AS cached_at FROM osv_ecosystems",
   ).first<{ readonly cached_at: number | null }>();
   if (!cache?.cached_at || now - cache.cached_at >= 86_400_000) {
-    budget.take();
-    const response = await fetch(`${env.OSV_BASE_URL}/ecosystems.txt`, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error(`OSV ecosystems failed (${response.status})`);
-    const ecosystems = z.array(z.string().min(1)).parse(
-      (await response.text())
-        .split("\n")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    );
-    await env.DB.batch(
-      ecosystems.map((ecosystem) =>
-        env.DB.prepare(
-          "INSERT INTO osv_ecosystems (ecosystem,cached_at) VALUES (?,?) ON CONFLICT(ecosystem) DO UPDATE SET cached_at=excluded.cached_at",
-        ).bind(ecosystem, now),
-      ),
-    );
+    try {
+      budget.take();
+      const response = await fetch(`${env.OSV_BASE_URL}/ecosystems.txt`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`OSV ecosystems failed (${response.status})`);
+      const ecosystems = z.array(z.string().min(1)).parse(
+        (await response.text())
+          .split("\n")
+          .map((value) => value.trim())
+          .filter(Boolean),
+      );
+      await env.DB.batch(
+        ecosystems.map((ecosystem) =>
+          env.DB.prepare(
+            "INSERT INTO osv_ecosystems (ecosystem,cached_at) VALUES (?,?) ON CONFLICT(ecosystem) DO UPDATE SET cached_at=excluded.cached_at",
+          ).bind(ecosystem, now),
+        ),
+      );
+    } catch (error) {
+      console.error("Scheduled OSV ecosystems refresh failed", {
+        error: describeError(error),
+      });
+    }
   }
   const active = await env.DB.prepare(
     "SELECT DISTINCT CASE WHEN instr(c.ecosystem, ':')>0 THEN substr(c.ecosystem,1,instr(c.ecosystem,':')-1) ELSE c.ecosystem END AS ecosystem FROM components c JOIN sboms s ON s.id=c.sbom_id AND s.retired_at IS NULL JOIN osv_ecosystems e ON e.ecosystem=CASE WHEN instr(c.ecosystem, ':')>0 THEN substr(c.ecosystem,1,instr(c.ecosystem,':')-1) ELSE c.ecosystem END LEFT JOIN sync_cursors sc ON sc.ecosystem=e.ecosystem WHERE c.matchable=1 ORDER BY COALESCE(sc.last_synced_at,'')",
@@ -151,16 +165,24 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
           queue: env.OSV_ADVISORY_JOBS,
         });
       } catch (error) {
-        if (!(error instanceof Error)) throw error;
-        console.error("Scheduled OSV discovery failed", { ecosystem, error });
+        console.error("Scheduled OSV discovery failed", { ecosystem, error: describeError(error) });
       }
     }
   }
-  await requeueAdvisoryJobs({
-    database: env.DB,
-    queue: env.OSV_ADVISORY_JOBS,
-    now,
-  });
-  if (env.DISPATCH_ENABLED === "true" && budget.remaining > 1)
-    await dispatchPending(env, now, budget);
+  try {
+    await requeueAdvisoryJobs({
+      database: env.DB,
+      queue: env.OSV_ADVISORY_JOBS,
+      now,
+    });
+  } catch (error) {
+    console.error("Scheduled advisory requeue failed", { error: describeError(error) });
+  }
+  if (env.DISPATCH_ENABLED === "true" && budget.remaining > 1) {
+    try {
+      await dispatchPending(env, now, budget);
+    } catch (error) {
+      console.error("Scheduled dispatch failed", { error: describeError(error) });
+    }
+  }
 }

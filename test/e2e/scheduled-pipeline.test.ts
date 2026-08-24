@@ -305,6 +305,64 @@ describe("delayed GitHub attestation ingestion", () => {
     ).resolves.toBe(2);
   });
 
+  it("keeps processing the queue when one job yields an unusable predicate", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fixture = await githubWebhookFixture("predicate");
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,attempted_at,created_at) VALUES (?,?,?,?, 'failed',?,0)",
+      ).bind(
+        `sha256:${"b".repeat(64)}`,
+        String(INSTALLATION_ID),
+        String(REPOSITORY_ID),
+        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+        1_000,
+      ),
+      env.DB.prepare(
+        "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,attempted_at,created_at) VALUES (?,?,?,?, 'pending',NULL,1)",
+      ).bind(
+        `sha256:${"f".repeat(64)}`,
+        String(INSTALLATION_ID),
+        String(REPOSITORY_ID),
+        `ghcr.io/owner/demo@sha256:${"f".repeat(64)}`,
+      ),
+    ]);
+    await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 2000)").run();
+
+    await runScheduled(
+      {
+        ...env,
+        ...fixture.bindings,
+        GH_APP_ID: "",
+        GH_APP_INSTALLATION_ID: "",
+        GH_APP_PRIVATE_KEY: "",
+        OSV_API_URL: "https://api.osv.test",
+        OSV_BASE_URL: "https://osv.test",
+        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+      },
+      2_000_000,
+    );
+
+    const failed = await env.DB.prepare(
+      "SELECT error FROM github_ingestion_jobs WHERE subject_digest=?",
+    )
+      .bind(`sha256:${"b".repeat(64)}`)
+      .first<{ readonly error: string | null }>();
+    expect(failed?.error).toMatch(/ZodError: \[/);
+    await expect(
+      env.DB.prepare("SELECT attempted_at FROM github_ingestion_jobs WHERE subject_digest=?")
+        .bind(`sha256:${"f".repeat(64)}`)
+        .first<number>("attempted_at"),
+    ).resolves.toBe(2_000_000);
+    expect(error).toHaveBeenCalledWith(
+      "Scheduled GitHub ingestion failed",
+      expect.objectContaining({
+        subjectDigest: `sha256:${"b".repeat(64)}`,
+      }),
+    );
+    error.mockRestore();
+  });
+
   it("processes never-attempted jobs before retrying pending peers", async () => {
     const fixture = await githubWebhookFixture("unattested");
     const rows = Array.from({ length: 11 }, (_, index) =>
