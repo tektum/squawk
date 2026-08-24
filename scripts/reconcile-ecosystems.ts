@@ -2,21 +2,43 @@ import { z } from "zod";
 import { parsePurl } from "../src/sbom";
 
 const inputSchema = z.tuple([z.string().min(1)]);
-const componentsSchema = z.array(
-  z.object({
-    results: z.array(
-      z.object({
-        id: z.number().int().positive(),
-        purl: z.string().min(1),
-        ecosystem: z.string(),
-        matchable: z.number().int(),
-      }),
-    ),
-  }),
-);
+const storedComponentSchema = z.object({
+  id: z.number().int().positive(),
+  purl: z.string().min(1),
+  ecosystem: z.string(),
+  matchable: z.number().int(),
+});
+const componentsSchema = z.array(z.object({ results: z.array(storedComponentSchema) }));
+
+export type StoredComponent = z.infer<typeof storedComponentSchema>;
 
 function quote(value: string) {
   return `'${value.replaceAll("'", "''")}'`;
+}
+
+/**
+ * The requeue statement is part of every plan, never conditional on the update
+ * count: a previous run may have restated components and then failed before
+ * requeueing, and repeating the reset is harmless.
+ */
+export function reconciliationPlan(components: readonly StoredComponent[]): {
+  readonly updates: readonly string[];
+  readonly requeue: string;
+} {
+  const updates: string[] = [];
+  for (const component of components) {
+    const resolved = parsePurl(component.purl);
+    const matchable = resolved.matchable ? 1 : 0;
+    if (resolved.ecosystem === component.ecosystem && matchable === component.matchable) continue;
+    updates.push(
+      `UPDATE components SET ecosystem=${quote(resolved.ecosystem)},matchable=${matchable} WHERE id=${component.id};`,
+    );
+  }
+  return {
+    updates,
+    requeue: `DELETE FROM matching_errors;
+UPDATE sboms SET backfill_status='pending',backfill_error=NULL WHERE retired_at IS NULL;`,
+  };
 }
 
 export function assertSuccessfulExit(exitCode: number) {
@@ -42,28 +64,10 @@ if (import.meta.main) {
   );
   const components = parsed[0]?.results ?? [];
   if (components.length === 0) throw new Error("no components to reconcile");
-
-  const updates: string[] = [];
-  for (const component of components) {
-    const resolved = parsePurl(component.purl);
-    const matchable = resolved.matchable ? 1 : 0;
-    if (resolved.ecosystem === component.ecosystem && matchable === component.matchable) continue;
-    updates.push(
-      `UPDATE components SET ecosystem=${quote(resolved.ecosystem)},matchable=${matchable} WHERE id=${component.id};`,
-    );
-  }
-  console.log(`components=${components.length} restated=${updates.length}`);
-  if (updates.length > 0) {
-    for (let offset = 0; offset < updates.length; offset += 200)
-      await execute(database, updates.slice(offset, offset + 200).join("\n"));
-
-    // Findings were matched against the previous ecosystems, so every live SBOM has to
-    // be re-queried against OSV. Cron drains the queue in bounded batches.
-    await execute(
-      database,
-      `DELETE FROM matching_errors;
-UPDATE sboms SET backfill_status='pending',backfill_error=NULL WHERE retired_at IS NULL;`,
-    );
-    console.log("queued re-backfill for every live SBOM");
-  }
+  const plan = reconciliationPlan(components);
+  console.log(`components=${components.length} restated=${plan.updates.length}`);
+  for (let offset = 0; offset < plan.updates.length; offset += 200)
+    await execute(database, plan.updates.slice(offset, offset + 200).join("\n"));
+  await execute(database, plan.requeue);
+  console.log("queued re-backfill for every live SBOM");
 }
