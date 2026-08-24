@@ -3,6 +3,7 @@ import { recordActivity } from "./activity";
 import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
 import { SubrequestBudget } from "./budget";
 import { dispatchPending } from "./dispatch";
+import { describeError } from "./error-detail";
 import { discoverAdvisories, requeueAdvisoryJobs } from "./sync";
 import { type IngestionJob, ingestPendingImage } from "./webhook-ingestion";
 
@@ -14,16 +15,6 @@ type ScheduledEnv = Parameters<typeof dispatchPending>[0] &
     readonly OSV_ADVISORY_JOBS: Queue;
   };
 const ingestionRetryDelayMilliseconds = 15 * 60_000;
-
-function describeError(error: unknown): string {
-  if (error instanceof Error) {
-    const issues = "issues" in error ? (error.issues as unknown) : undefined;
-    return issues === undefined
-      ? `${error.name}: ${error.message}`
-      : `${error.name}: ${JSON.stringify(issues).slice(0, 1_500)}`;
-  }
-  return typeof error === "string" ? error : (JSON.stringify(error) ?? "unknown error");
-}
 
 export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise<void> {
   try {

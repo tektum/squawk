@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { recordActivity } from "./activity";
 import type { SubrequestBudget } from "./budget";
+import { describeError } from "./error-detail";
 import { compareVersion } from "./osv/comparator";
 
 export const backfillLeaseMilliseconds = 20 * 60_000;
@@ -143,7 +144,7 @@ export async function backfillSbom(options: BackfillOptions): Promise<void> {
       .run();
     await recordActivity(options.database, "scan", "completed", now);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown backfill error";
+    const message = describeError(error);
     await options.database
       .prepare("UPDATE sboms SET backfill_status='failed',backfill_error=? WHERE id=?")
       .bind(message.slice(0, 500), options.sbomId)

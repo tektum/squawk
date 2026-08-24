@@ -3,6 +3,7 @@ import { z } from "zod";
 import { activityResponse, recordActivity } from "./activity";
 import { AuthenticationError, AuthorizationError, authenticate, requireCapability } from "./auth";
 import { type Principal, SbomIdSchema, TenantIdSchema, vexInputSchema } from "./domain";
+import { safeIssues } from "./error-detail";
 import { inventoryResponse } from "./inventory";
 import { appendVex, listFindings, retireSbom } from "./repository";
 import { runScheduled } from "./scheduled";
@@ -140,7 +141,7 @@ app.onError((error, context) => {
     return context.json({ error: "invalid request" }, 400);
   }
   if (error instanceof z.ZodError) {
-    console.warn("Invalid request", { issues: error.issues });
+    console.warn("Invalid request", { issues: safeIssues(error.issues) });
     return context.json({ error: "invalid request" }, 400);
   }
   console.error("Unhandled request error", {

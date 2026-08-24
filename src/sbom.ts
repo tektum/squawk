@@ -1,9 +1,21 @@
 import { z } from "zod";
 import type { Component } from "./domain";
 
+/**
+ * Reasons are fixed codes: predicate content is attacker-controlled and these
+ * messages get logged and persisted, so no external value may appear in them.
+ * Failing images stay identifiable by their immutable subject digest.
+ */
+type PredicateFailure =
+  | "unparsable purl"
+  | "purl missing package type or name"
+  | "purl has invalid percent encoding"
+  | "no package components found"
+  | "duplicate package identity";
+
 export class PredicateError extends Error {
-  constructor(message: string) {
-    super(`invalid SBOM predicate: ${message}`);
+  constructor(reason: PredicateFailure) {
+    super(`invalid SBOM predicate: ${reason}`);
     this.name = "PredicateError";
   }
 }
@@ -84,16 +96,15 @@ function parsePurl(purl: string): {
   readonly matchable: boolean;
 } {
   const match = /^pkg:([^/]+)\/(.+)@/.exec(purl);
-  if (!match) throw new PredicateError(`unparsable purl ${purl}`);
+  if (!match) throw new PredicateError("unparsable purl");
   const [, purlType, packagePath] = match;
   const rawPackageName = packagePath?.split("/").at(-1);
-  if (!purlType || !rawPackageName)
-    throw new PredicateError(`purl ${purl} missing package type or name`);
+  if (!purlType || !rawPackageName) throw new PredicateError("purl missing package type or name");
   let packageName: string;
   try {
     packageName = decodeURIComponent(rawPackageName);
   } catch {
-    throw new PredicateError(`purl ${purl} has invalid percent encoding`);
+    throw new PredicateError("purl has invalid percent encoding");
   }
   const ecosystem = purlEcosystems[purlType];
   return ecosystem
@@ -120,7 +131,6 @@ export function parsePredicate(predicate: unknown): readonly Component[] {
   const identities = new Set(
     components.map((component) => `${component.purl}\u0000${component.version}`),
   );
-  if (identities.size !== components.length)
-    throw new PredicateError("duplicate package identity in predicate");
+  if (identities.size !== components.length) throw new PredicateError("duplicate package identity");
   return components;
 }
