@@ -86,6 +86,67 @@ describe("SBOM predicate parser", () => {
     expect(component).toMatchObject({ ecosystem: "unknown:unknown", matchable: false });
   });
 
+  it("maps apk distributions to their own OSV ecosystems", () => {
+    const components = parsePredicate({
+      bomFormat: "CycloneDX",
+      components: [
+        {
+          name: "ca-certificates-bundle",
+          version: "20260413-r0",
+          purl: "pkg:apk/wolfi/ca-certificates-bundle@20260413-r0?arch=x86_64&distro=wolfi",
+        },
+        {
+          name: "glibc",
+          version: "2.41-r0",
+          purl: "pkg:apk/chainguard/glibc@2.41-r0?arch=x86_64&distro=chainguard",
+        },
+        {
+          name: "busybox",
+          version: "1.37.0-r61",
+          purl: "pkg:apk/alpine/busybox@1.37.0-r61?arch=x86_64&distro=alpine-3.21.3",
+        },
+      ],
+    });
+
+    expect(components.map((component) => component.ecosystem)).toEqual([
+      "Wolfi",
+      "Chainguard",
+      "Alpine:v3.21",
+    ]);
+    expect(components.every((component) => component.matchable)).toBe(true);
+  });
+
+  it("keeps an Alpine package without a release non-matchable", () => {
+    const [component] = parsePredicate({
+      bomFormat: "CycloneDX",
+      components: [
+        { name: "busybox", version: "1.37.0-r61", purl: "pkg:apk/alpine/busybox@1.37.0-r61" },
+      ],
+    });
+
+    expect(component).toMatchObject({ ecosystem: "unknown:apk", matchable: false });
+  });
+
+  it("pins Debian packages to their release when the distro qualifier carries one", () => {
+    const components = parsePredicate({
+      bomFormat: "CycloneDX",
+      components: [
+        {
+          name: "openssl",
+          version: "3.0.11-1",
+          purl: "pkg:deb/debian/openssl@3.0.11-1?arch=amd64&distro=debian-12",
+        },
+        {
+          name: "zlib1g",
+          version: "1.2.13",
+          purl: "pkg:deb/debian/zlib1g@1.2.13?distro=debian-trixie",
+        },
+      ],
+    });
+
+    expect(components.map((component) => component.ecosystem)).toEqual(["Debian:12", "Debian"]);
+  });
+
   it("parses exactly 200 mixed CycloneDX components", () => {
     const ecosystems = ["deb", "npm", "pypi"] as const;
     const components = parsePredicate({
