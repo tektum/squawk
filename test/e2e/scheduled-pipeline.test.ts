@@ -1,21 +1,21 @@
 import { env } from "cloudflare:test";
+import { http, HttpResponse } from "msw";
 import { exportPKCS8, generateKeyPair } from "jose";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchPending } from "../../src/dispatch";
 import { runScheduled } from "../../src/scheduled";
 import { githubWebhookFixture, INSTALLATION_ID, REPOSITORY_ID } from "../fixtures/github-webhook";
 import { respond } from "../http";
+import { server } from "../server";
 
 describe("durable multi-platform dispatch", () => {
   beforeEach(async () => {
-    await env.DB.prepare(
-      "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
-    ).run();
+    await env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)").run();
     for (const [index, platform] of ["linux/amd64", "linux/arm64"].entries()) {
       const sbom = `sbom-${index}`;
       await env.DB.batch([
         env.DB.prepare(
-          "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES (?,'tenant',?,?,?,?,'complete',0)",
+          "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at,installation_id,repository_id) VALUES (?,'tenant',?,?,?,?,'complete',0,'123','9')",
         ).bind(
           sbom,
           `ghcr.io/x@sha256:${String(index + 1).repeat(64)}`,
@@ -29,9 +29,15 @@ describe("durable multi-platform dispatch", () => {
         env.DB.prepare("INSERT INTO findings VALUES ('tenant',?,'OSV-1',0,NULL)").bind(index + 1),
       ]);
     }
-    await env.DB.prepare(
-      "INSERT INTO vulnerabilities VALUES ('OSV-1','npm','demo','{}','high','summary','2026-01-01T00:00:00Z')",
-    ).run();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO vulnerabilities VALUES ('OSV-1','npm','demo','{}','high','summary','2026-01-01T00:00:00Z')",
+      ),
+      // Dispatch reads the source recorded on the SBOM itself.
+      env.DB.prepare(
+        "INSERT INTO github_sources (installation_id,repository_id,org_id,dispatch_workflow,dispatch_ref,created_at) VALUES ('123','9','tenant','monitor.yaml','main',0)",
+      ),
+    ]);
   });
 
   it("sends one stable delivery and marks both findings", async () => {
@@ -42,6 +48,11 @@ describe("durable multi-platform dispatch", () => {
       url: "https://api.github.com/app/installations/123/access_tokens",
       status: 201,
       body: { token: "installation-token" },
+    });
+    respond({
+      url: "https://api.github.com/repositories/9",
+      status: 200,
+      body: { full_name: "owner/repo" },
     });
     respond({
       method: "POST",
@@ -69,6 +80,120 @@ describe("durable multi-platform dispatch", () => {
     expect(await dispatchPending(dispatchEnv, 2000)).toBe(0);
   });
 
+  it("routes a digest published by two sources to each publishing repository", async () => {
+    const pair = await generateKeyPair("RS256", { extractable: true });
+    const privateKey = await exportPKCS8(pair.privateKey);
+    const shared = `ghcr.io/x@sha256:${"a".repeat(64)}`;
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs VALUES ('other','app',0)"),
+      env.DB.prepare(
+        "INSERT INTO github_sources (installation_id,repository_id,org_id,dispatch_workflow,dispatch_ref,created_at) VALUES ('456','77','other','monitor.yaml','main',0)",
+      ),
+      // Same digest, different publisher: the finding must follow its own source.
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at,installation_id,repository_id) VALUES ('rival','other',?,?, 'linux/amd64','z','complete',0,'456','77')",
+      ).bind(`ghcr.io/rival@sha256:${"9".repeat(64)}`, shared),
+      env.DB.prepare(
+        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (99,'rival','demo','npm','1.5.0','pkg:npm/demo@1.5.0',1)",
+      ),
+      env.DB.prepare("INSERT INTO findings VALUES ('other',99,'OSV-1',0,NULL)"),
+    ]);
+    const requests: string[] = [];
+    server.use(
+      http.post("https://api.github.com/app/installations/:id/access_tokens", ({ params }) => {
+        requests.push(`token:${String(params["id"])}`);
+        return HttpResponse.json({ token: "installation-token" }, { status: 201 });
+      }),
+      http.get("https://api.github.com/repositories/:id", ({ params }) =>
+        HttpResponse.json({
+          full_name: String(params["id"]) === "9" ? "owner/repo" : "rival/repo",
+        }),
+      ),
+      http.post(
+        "https://api.github.com/repos/:owner/:repo/actions/workflows/:workflow/dispatches",
+        ({ params }) => {
+          requests.push(`dispatch:${String(params["owner"])}/${String(params["repo"])}`);
+          return new HttpResponse(null, { status: 204 });
+        },
+      ),
+    );
+
+    await dispatchPending(
+      {
+        DB: env.DB,
+        GH_APP_ID: "42",
+        GH_APP_INSTALLATION_ID: "123",
+        GH_APP_PRIVATE_KEY: privateKey,
+      },
+      1000,
+    );
+
+    // Each source authenticates with its own installation and receives only its finding.
+    expect(requests).toContain("token:123");
+    expect(requests).toContain("token:456");
+    expect(requests).toContain("dispatch:owner/repo");
+    expect(requests).toContain("dispatch:rival/repo");
+  });
+
+  it("skips findings whose image has no dispatch target instead of calling GitHub", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const pair = await generateKeyPair("RS256", { extractable: true });
+    const privateKey = await exportPKCS8(pair.privateKey);
+    // A source with no configured target, which is what an unseeded install looks like.
+    await env.DB.prepare("UPDATE github_sources SET dispatch_workflow=NULL").run();
+
+    await expect(
+      dispatchPending(
+        {
+          DB: env.DB,
+          GH_APP_ID: "42",
+          GH_APP_INSTALLATION_ID: "123",
+          GH_APP_PRIVATE_KEY: privateKey,
+        },
+        1000,
+      ),
+    ).resolves.toBe(0);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM dispatch_deliveries").first<number>("count"),
+    ).resolves.toBe(0);
+    expect(warn).toHaveBeenCalledWith(
+      "Findings without a dispatch target",
+      expect.objectContaining({ findings: 1 }),
+    );
+    warn.mockRestore();
+  });
+
+  it("stops before later stages once the run deadline expires", async () => {
+    // A stale ecosystem cache would normally trigger a refresh request.
+    await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 0)").run();
+    let refreshed = false;
+    server.use(
+      http.get("https://osv.test/ecosystems.txt", () => {
+        refreshed = true;
+        return new HttpResponse("npm\n", { status: 200 });
+      }),
+    );
+
+    await runScheduled(
+      {
+        ...env,
+        GH_APP_ID: "",
+        GH_APP_INSTALLATION_ID: "",
+        GH_APP_PRIVATE_KEY: "",
+        OSV_API_URL: "https://api.osv.test",
+        OSV_BASE_URL: "https://osv.test",
+        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+        DISPATCH_ENABLED: "true",
+      },
+      2_000,
+      0,
+    );
+
+    expect(refreshed).toBe(false);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM dispatch_deliveries").first<number>("count"),
+    ).resolves.toBe(0);
+  });
   it.each([429, 500])("keeps a %s GitHub dispatch retryable", async (status) => {
     const pair = await generateKeyPair("RS256", { extractable: true });
     const privateKey = await exportPKCS8(pair.privateKey);
@@ -77,6 +202,11 @@ describe("durable multi-platform dispatch", () => {
       url: "https://api.github.com/app/installations/123/access_tokens",
       status: 201,
       body: { token: "installation-token" },
+    });
+    respond({
+      url: "https://api.github.com/repositories/9",
+      status: 200,
+      body: { full_name: "owner/repo" },
     });
     respond({
       method: "POST",
@@ -183,13 +313,11 @@ describe("durable multi-platform dispatch", () => {
 
 describe("delayed GitHub attestation ingestion", () => {
   beforeEach(async () => {
+    await env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)").run();
     await env.DB.prepare(
-      "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
-    ).run();
-    await env.DB.prepare(
-      "INSERT INTO github_sources (installation_id,repository_id,org_id,workflow,ref,created_at) VALUES (?,?,?,?,?,0)",
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,dispatch_workflow,dispatch_ref,created_at) VALUES (?,?,?,?,?,0)",
     )
-      .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "registry_package", "")
+      .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "monitor.yaml", "main")
       .run();
   });
 

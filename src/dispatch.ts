@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { SubrequestBudget } from "./budget";
 import { sha256 } from "./digest";
-import { installationToken } from "./github";
+import { GitHubApiError, installationToken } from "./github";
 
 type DispatchEnv = {
   readonly DB: D1Database;
@@ -18,36 +18,63 @@ const pendingSchema = z.object({
   version: z.string(),
   vuln_id: z.string(),
   severity: z.string().nullable(),
-  github_dispatch_repo: z.string(),
-  github_dispatch_workflow: z.string(),
+  installation_id: z.string().nullable(),
+  repository_id: z.string().nullable(),
+  dispatch_workflow: z.string().nullable(),
+  dispatch_ref: z.string().nullable(),
   platforms: z.string(),
 });
+const repositorySchema = z.object({ full_name: z.string().regex(/^[^/]+\/[^/]+$/) });
+
+/** Resolves a repository path from its immutable id so no external name is stored. */
+async function repositoryPath(
+  repositoryId: string,
+  token: string,
+  budget?: SubrequestBudget,
+): Promise<string> {
+  budget?.take();
+  const response = await fetch(`https://api.github.com/repositories/${repositoryId}`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      "user-agent": "squawk",
+      "x-github-api-version": "2026-03-10",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new GitHubApiError(response.status);
+  return repositorySchema.parse(await response.json()).full_name;
+}
 
 export async function dispatchPending(
   env: DispatchEnv,
   now = Date.now(),
   budget?: SubrequestBudget,
 ): Promise<number> {
+  // Each SBOM records the source that produced it, so a digest published by two
+  // repositories cannot route a finding to the wrong one, and the dispatch target
+  // never drifts from the repository actually publishing the images.
   const rows = (
     await env.DB.prepare(`SELECT f.org_id, s.logical_image_ref, c.package_name, c.ecosystem, c.version,
-    f.vuln_id, v.severity, o.github_dispatch_repo, o.github_dispatch_workflow,
+    f.vuln_id, v.severity, s.installation_id, s.repository_id, src.dispatch_workflow, src.dispatch_ref,
     GROUP_CONCAT(s.platform || '|' || s.image_ref, char(10)) AS platforms
     FROM findings f JOIN components c ON c.id=f.component_id JOIN sboms s ON s.id=c.sbom_id AND s.retired_at IS NULL
     JOIN vulnerabilities v ON v.id=f.vuln_id AND v.ecosystem=c.ecosystem AND v.package_name=c.package_name
-    JOIN orgs o ON o.descope_tenant_id=f.org_id
+    LEFT JOIN github_sources src ON src.installation_id=s.installation_id AND src.repository_id=s.repository_id
     WHERE f.dispatched_at IS NULL AND NOT EXISTS (SELECT 1 FROM vex_statements x WHERE x.id=(SELECT id FROM vex_statements
       WHERE org_id=f.org_id AND package_name=c.package_name AND ecosystem=c.ecosystem AND vuln_id=f.vuln_id
       ORDER BY created_at DESC,id DESC LIMIT 1) AND x.status IN ('not_affected','fixed'))
-    GROUP BY f.org_id,s.logical_image_ref,c.package_name,c.ecosystem,c.version,f.vuln_id`).all()
+    GROUP BY f.org_id,s.logical_image_ref,s.installation_id,s.repository_id,c.package_name,c.ecosystem,c.version,f.vuln_id`).all()
   ).results.map((row) => pendingSchema.parse(row));
-  if (rows.length === 0) return 0;
-  const token = await installationToken(
-    env,
-    { installationId: env.GH_APP_INSTALLATION_ID },
-    now,
-    budget,
+  const routable = rows.filter(
+    (row) => row.installation_id && row.repository_id && row.dispatch_workflow,
   );
-  for (const row of rows) {
+  const unroutable = rows.length - routable.length;
+  if (unroutable > 0) console.warn("Findings without a dispatch target", { findings: unroutable });
+  if (routable.length === 0) return 0;
+  const tokens = new Map<string, string>();
+  const paths = new Map<string, string>();
+  for (const row of routable) {
     const deliveryId = await sha256(
       [
         row.org_id,
@@ -58,6 +85,20 @@ export async function dispatchPending(
         row.vuln_id,
       ].join("\u0000"),
     );
+    const installationId = row.installation_id ?? "";
+    const repositoryId = row.repository_id ?? "";
+    // Tokens are scoped to the routed source's installation and repository, so a
+    // finding is never dispatched with another installation's authority.
+    let token = tokens.get(`${installationId}\u0000${repositoryId}`);
+    if (!token) {
+      token = await installationToken(env, { installationId, repositoryId }, now, budget);
+      tokens.set(`${installationId}\u0000${repositoryId}`, token);
+    }
+    let repository = paths.get(repositoryId);
+    if (!repository) {
+      repository = await repositoryPath(repositoryId, token, budget);
+      paths.set(repositoryId, repository);
+    }
     const platforms = row.platforms.split("\n").map((value) => {
       const [platform, image_ref] = value.split("|");
       return z
@@ -80,7 +121,7 @@ export async function dispatchPending(
       .run();
     budget?.take();
     const response = await fetch(
-      `https://api.github.com/repos/${row.github_dispatch_repo}/actions/workflows/${row.github_dispatch_workflow}/dispatches`,
+      `https://api.github.com/repos/${repository}/actions/workflows/${row.dispatch_workflow}/dispatches`,
       {
         method: "POST",
         headers: {
@@ -90,7 +131,7 @@ export async function dispatchPending(
           "user-agent": "squawk",
         },
         body: JSON.stringify({
-          ref: "main",
+          ref: row.dispatch_ref || "main",
           inputs: {
             payload: JSON.stringify({
               schema_version: 1,

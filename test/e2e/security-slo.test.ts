@@ -17,15 +17,26 @@ const dispatchEnv = async () => {
 
 describe("security faults and scheduled SLOs", () => {
   beforeEach(async () => {
-    await env.DB.prepare(
-      "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
-    ).run();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
+      env.DB.prepare(
+        "INSERT INTO github_sources (installation_id,repository_id,org_id,dispatch_workflow,dispatch_ref,created_at) VALUES ('123','9','tenant','monitor.yaml','main',0)",
+      ),
+      // Both fixtures below are ingested images, so each digest has a receipt that
+      // dispatch follows back to the publishing repository.
+      env.DB.prepare(
+        "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at) VALUES ('receipt-b','123','9',?,?,'accepted',0)",
+      ).bind(`sha256:${"b".repeat(64)}`, `sha256:${"b".repeat(64)}`),
+      env.DB.prepare(
+        "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at) VALUES ('receipt-e','123','9',?,?,'accepted',0)",
+      ).bind(`sha256:${"e".repeat(64)}`, `sha256:${"e".repeat(64)}`),
+    ]);
   });
 
   it("retries an accepted-before-D1-crash delivery with its stable identity", async () => {
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('sbom','tenant',?,?, 'linux/amd64',?,'complete',0)",
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at,installation_id,repository_id) VALUES ('sbom','tenant',?,?, 'linux/amd64',?,'complete',0,'123','9')",
       ).bind(
         `ghcr.io/x@sha256:${"a".repeat(64)}`,
         `ghcr.io/x@sha256:${"b".repeat(64)}`,
@@ -45,6 +56,11 @@ describe("security faults and scheduled SLOs", () => {
       url: "https://api.github.com/app/installations/123/access_tokens",
       status: 201,
       body: { token: "installation-token" },
+    });
+    respond({
+      url: "https://api.github.com/repositories/9",
+      status: 200,
+      body: { full_name: "owner/repo" },
     });
     respond({
       method: "POST",
@@ -80,6 +96,11 @@ describe("security faults and scheduled SLOs", () => {
       body: { token: "installation-token" },
     });
     respond({
+      url: "https://api.github.com/repositories/9",
+      status: 200,
+      body: { full_name: "owner/repo" },
+    });
+    respond({
       method: "POST",
       url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
       status: 204,
@@ -98,7 +119,7 @@ describe("security faults and scheduled SLOs", () => {
     const modifiedAt = new Date(now - 21_599_999).toISOString();
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('pending','tenant',?,?, 'linux/amd64',?,'pending',?)",
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at,installation_id,repository_id) VALUES ('pending','tenant',?,?, 'linux/amd64',?,'pending',?,'123','9')",
       ).bind(
         `ghcr.io/x@sha256:${"d".repeat(64)}`,
         `ghcr.io/x@sha256:${"e".repeat(64)}`,
@@ -143,6 +164,11 @@ describe("security faults and scheduled SLOs", () => {
       url: "https://api.github.com/app/installations/123/access_tokens",
       status: 201,
       body: { token: "installation-token" },
+    });
+    respond({
+      url: "https://api.github.com/repositories/9",
+      status: 200,
+      body: { full_name: "owner/repo" },
     });
     respond({
       method: "POST",

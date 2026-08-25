@@ -14,9 +14,7 @@ const digest = (character: string) => `ghcr.io/demo@sha256:${character.repeat(64
 const seedFinding = async (suffix: string, retired = false): Promise<void> => {
   const tenant = `tenant-${suffix}`;
   const sbom = `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
-  await env.DB.prepare("INSERT INTO orgs VALUES (?, 'app', 'owner/repo', 'monitor.yaml', 0)")
-    .bind(tenant)
-    .run();
+  await env.DB.prepare("INSERT INTO orgs VALUES (?, 'app', 0)").bind(tenant).run();
   await env.DB.prepare(
     "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at,retired_at) VALUES (?,?,?,?,?,'hash','complete',0,?)",
   )

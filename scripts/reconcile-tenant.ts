@@ -40,7 +40,7 @@ if (import.meta.main) {
     database,
     `
 INSERT OR IGNORE INTO orgs
-SELECT ${target},descope_inbound_app_id,github_dispatch_repo,github_dispatch_workflow,created_at
+SELECT ${target},descope_inbound_app_id,created_at
 FROM orgs ORDER BY created_at LIMIT 1;
 UPDATE github_sources SET org_id=${target} WHERE org_id!=${target};
 UPDATE sboms SET org_id=${target} WHERE org_id!=${target};

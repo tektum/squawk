@@ -174,7 +174,10 @@ export async function ingestPendingImage(
           candidate.input.platform === request.input.platform,
       ) === index,
   );
-  const result = await ingestSboms(env.DB, TenantIdSchema.parse(source.org_id), uniqueRequests);
+  const result = await ingestSboms(env.DB, TenantIdSchema.parse(source.org_id), uniqueRequests, {
+    installationId: job.installationId,
+    repositoryId: job.repositoryId,
+  });
   if (result.kind === "conflict") throw new WebhookError(409, "conflicting platform submission");
   if (!registry.complete) {
     await env.DB.prepare(
@@ -189,7 +192,6 @@ export async function ingestPendingImage(
         job.subjectDigest,
       )
       .run();
-    return "pending" as const;
   }
   await finishIngestion(env, job, now);
   const backfills = result.createdSbomIds.map((sbomId) =>

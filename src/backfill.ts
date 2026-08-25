@@ -2,7 +2,7 @@ import { z } from "zod";
 import { recordActivity } from "./activity";
 import { resolveAdvisory } from "./advisory";
 import { type AdvisoryReference, ecosystemFamily, registerAdvisoryJobs } from "./advisory-jobs";
-import type { SubrequestBudget } from "./budget";
+import type { RunDeadline, SubrequestBudget } from "./budget";
 import { describeError } from "./error-detail";
 
 export const backfillLeaseMilliseconds = 20 * 60_000;
@@ -32,6 +32,7 @@ type BackfillOptions = {
   readonly osvBaseUrl: string;
   readonly now?: number;
   readonly budget?: SubrequestBudget;
+  readonly deadline?: RunDeadline;
 };
 
 /**
@@ -88,7 +89,7 @@ export async function backfillSbom(options: BackfillOptions): Promise<void> {
       // on the subrequest budget leaves the remainder for the queue to finish.
       const registered = await registerAdvisoryJobs(options.database, [...references.values()]);
       for (const advisory of registered) {
-        if (options.budget && options.budget.remaining <= 1) break;
+        if ((options.budget && options.budget.remaining <= 1) || options.deadline?.expired) break;
         options.budget?.take();
         await resolveAdvisory({
           database: options.database,

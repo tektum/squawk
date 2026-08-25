@@ -7,7 +7,7 @@ import { respond } from "../http";
 describe("manual scheduled operation", () => {
   beforeEach(async () => {
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)"),
+      env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
       env.DB.prepare(
         "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('pending','tenant','image','logical','linux/amd64','digest','failed',0)",
       ),
