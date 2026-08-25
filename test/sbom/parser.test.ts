@@ -162,6 +162,20 @@ describe("SBOM predicate parser", () => {
     expect(component).toMatchObject({ ecosystem: "Go", version: "1.26.5", matchable: true });
   });
 
+  it("accepts a PURL without a version and uses the document version", () => {
+    const [component] = parsePredicate({
+      bomFormat: "CycloneDX",
+      components: [{ name: "example", version: "1.0.0", purl: "pkg:npm/example" }],
+    });
+
+    expect(component).toMatchObject({
+      ecosystem: "npm",
+      packageName: "example",
+      version: "1.0.0",
+      matchable: true,
+    });
+  });
+
   it("parses exactly 200 mixed CycloneDX components", () => {
     const ecosystems = ["deb", "npm", "pypi"] as const;
     const components = parsePredicate({

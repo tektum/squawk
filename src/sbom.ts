@@ -129,16 +129,19 @@ export function parsePurl(purl: string): {
   const match = /^pkg:([^/?#]+)\/([^?#]+)/.exec(purl);
   if (!match) throw new PredicateError("unparsable purl");
   const [, purlType, pathWithVersion] = match;
-  const separator = pathWithVersion?.lastIndexOf("@") ?? -1;
-  if (!purlType || !pathWithVersion || separator <= 0) throw new PredicateError("unparsable purl");
-  const segments = pathWithVersion.slice(0, separator).split("/");
+  if (!purlType || !pathWithVersion) throw new PredicateError("unparsable purl");
+  // A purl version is optional; without one the document's own version is used.
+  const separator = pathWithVersion.lastIndexOf("@");
+  if (separator === 0) throw new PredicateError("purl missing package type or name");
+  const packagePath = separator < 0 ? pathWithVersion : pathWithVersion.slice(0, separator);
+  const segments = packagePath.split("/");
   const rawPackageName = segments.at(-1);
   if (!rawPackageName) throw new PredicateError("purl missing package type or name");
   let packageName: string;
   let purlVersion: string;
   try {
     packageName = decodeURIComponent(rawPackageName);
-    purlVersion = decodeURIComponent(pathWithVersion.slice(separator + 1));
+    purlVersion = separator < 0 ? "" : decodeURIComponent(pathWithVersion.slice(separator + 1));
   } catch {
     throw new PredicateError("purl has invalid percent encoding");
   }
