@@ -1,40 +1,38 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { activityResponse, recordActivity } from "./activity";
-import { AuthenticationError, AuthorizationError, authenticate, requireCapability } from "./auth";
-import { type Principal, SbomIdSchema, TenantIdSchema, vexInputSchema } from "./domain";
+import { registerAdminRoutes } from "./admin-api";
+import { adminClientResponse, adminShellResponse } from "./admin-shell";
+import {
+  AuthenticationError,
+  AuthorizationError,
+  authenticate,
+  principalForOrg,
+  requireCapability,
+} from "./auth";
+import { SbomIdSchema, vexInputSchema } from "./domain";
 import { safeIssues } from "./error-detail";
 import { inventoryResponse } from "./inventory";
 import { appendVex, listFindings, retireSbom } from "./repository";
-import { runScheduled } from "./scheduled";
 import { PredicateError } from "./sbom";
+import { runScheduled } from "./scheduled";
 import { handleGithubWebhook, WebhookError } from "./webhook";
+import type { WorkerEnv } from "./worker-env";
 
-export type WorkerBindings = {
-  readonly BUILD_SHA?: string;
-  readonly DB: D1Database;
-  readonly DISPATCH_ENABLED: string;
-  readonly DESCOPE_BASE_URL?: string;
-  readonly DESCOPE_PROJECT_ID: string;
-  readonly GH_APP_ID: string;
-  readonly GH_APP_INSTALLATION_ID: string;
-  readonly GH_APP_PRIVATE_KEY: string;
-  readonly GH_WEBHOOK_SECRET: string;
-  readonly OSV_API_URL: string;
-  readonly OSV_ADVISORY_JOBS: Queue;
-  readonly OSV_BASE_URL: string;
-  readonly EXECUTION_CONTEXT: ExecutionContext;
-};
+export type { WorkerBindings } from "./worker-env";
 
-export const app = new Hono<{
-  Bindings: WorkerBindings;
-  Variables: { readonly principal: Principal };
-}>();
+export const app = new Hono<WorkerEnv>();
 
 app.get("/health", (context) => {
   if (context.env.BUILD_SHA) context.header("x-squawk-version", context.env.BUILD_SHA);
   return context.json({ status: "ok" });
 });
+
+app.get("/admin", (context) =>
+  adminShellResponse(context.env.DESCOPE_PROJECT_ID, context.env.DESCOPE_BASE_URL),
+);
+
+app.get("/admin/app.js", (context) => adminClientResponse(context.req.raw));
 
 app.get("/", (context) => inventoryResponse(context.req.raw, context.env.DB));
 
@@ -69,11 +67,7 @@ app.use("/v1/*", async (context, next) => {
   await next();
 });
 
-function principalForOrg(principal: Principal, orgId: string): Principal {
-  if (principal.tenantId !== TenantIdSchema.parse(orgId))
-    throw new AuthorizationError("wrong tenant");
-  return principal;
-}
+registerAdminRoutes(app);
 
 app.post("/v1/operations/scheduled", async (context) => {
   const principal = context.get("principal");
@@ -116,17 +110,21 @@ app.get("/v1/orgs/:id/findings", async (context) => {
   const query = z
     .object({
       severity: z.string().min(1).optional(),
+      image: z.string().min(1).max(200).optional(),
       include_suppressed: z.enum(["true", "false"]).optional(),
       include_retired: z.enum(["true", "false"]).optional(),
+      limit: z.coerce.number().int().min(1).max(1000).catch(1000),
+      offset: z.coerce.number().int().min(0).max(100_000).catch(0),
     })
     .parse(context.req.query());
-  const findings = await listFindings(
-    context.env.DB,
-    principal.tenantId,
-    query.severity ?? null,
-    query.include_suppressed === "true",
-    query.include_retired === "true",
-  );
+  const findings = await listFindings(context.env.DB, principal.tenantId, {
+    severity: query.severity ?? null,
+    includeSuppressed: query.include_suppressed === "true",
+    includeRetired: query.include_retired === "true",
+    ...(query.image ? { image: query.image } : {}),
+    limit: query.limit,
+    offset: query.offset,
+  });
   return context.json({ findings });
 });
 

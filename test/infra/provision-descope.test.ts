@@ -1,6 +1,7 @@
-import { http, HttpResponse } from "msw";
+import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
-import { provisionDescope } from "../../scripts/provision-descope";
+import { provisionDescope, squawkApplication } from "../../scripts/provision-descope";
+import { capabilityValues } from "../../src/domain";
 import { server } from "../server";
 
 const desired = {
@@ -18,8 +19,37 @@ const desired = {
       { name: "vex.write", description: "Write VEX statements" },
     ],
     humanGrant: { permissions: ["operations.run", "sbom.manage", "findings.read", "vex.write"] },
+    humanRole: { name: "Squawk Operator", description: "Full control over Squawk" },
   },
 };
+
+const projectPermissions = desired.application.permissionsScopes;
+const tenantRole = {
+  name: desired.application.humanRole.name,
+  description: desired.application.humanRole.description,
+  permissionNames: projectPermissions.map((permission) => permission.name),
+  tenantId: desired.tenant.id,
+};
+
+function authorizationHandlers(
+  permissions: readonly { name: string; description: string }[],
+  roles: readonly unknown[],
+) {
+  return [
+    http.get("https://api.descope.test/v1/mgmt/permission/all", () =>
+      HttpResponse.json({ permissions }),
+    ),
+    http.get("https://api.descope.test/v1/mgmt/role/all", () => HttpResponse.json({ roles })),
+    http.post(
+      "https://api.descope.test/v1/mgmt/permission/:action",
+      () => new HttpResponse(null, { status: 200 }),
+    ),
+    http.post(
+      "https://api.descope.test/v1/mgmt/role/:action",
+      () => new HttpResponse(null, { status: 200 }),
+    ),
+  ];
+}
 
 describe("Descope management provisioning", () => {
   beforeEach(() => undefined);
@@ -49,13 +79,20 @@ describe("Descope management provisioning", () => {
         "https://api.descope.test/v1/mgmt/thirdparty/app/:path/create",
         () => new HttpResponse(null, { status: 200 }),
       ),
+      ...authorizationHandlers([], []),
     );
 
     await expect(provisionDescope(desired)).resolves.toEqual({
       tenantId: "tenant-1",
       inboundAppId: "app-1",
       clientId: "client-1",
-      changes: ["tenant:create", "application:create", "human-grant:create"],
+      changes: [
+        "tenant:create",
+        "application:create",
+        "human-grant:create",
+        ...projectPermissions.map(() => "permission:create"),
+        "role:create",
+      ],
     });
   });
 
@@ -92,9 +129,21 @@ describe("Descope management provisioning", () => {
         "https://api.descope.test/v1/mgmt/thirdparty/app/:path/update",
         () => new HttpResponse(null, { status: 200 }),
       ),
+      ...authorizationHandlers(
+        projectPermissions.map((permission, index) =>
+          index === 0 ? { ...permission, description: "Old" } : permission,
+        ),
+        [{ ...tenantRole, permissionNames: ["operations.run"] }],
+      ),
     );
     await expect(provisionDescope(desired)).resolves.toMatchObject({
-      changes: ["tenant:update", "application:update", "human-grant:update"],
+      changes: [
+        "tenant:update",
+        "application:update",
+        "human-grant:update",
+        "permission:update",
+        "role:update",
+      ],
     });
 
     server.use(
@@ -111,6 +160,7 @@ describe("Descope management provisioning", () => {
           value: { tenantId: "tenant-1", ...desired.application.humanGrant },
         }),
       ),
+      ...authorizationHandlers(projectPermissions, [tenantRole]),
     );
     await expect(provisionDescope(desired)).resolves.toMatchObject({ changes: [] });
   });
@@ -202,10 +252,19 @@ describe("Descope management provisioning", () => {
         "https://api.descope.test/v1/mgmt/thirdparty/app/human-grant/create",
         () => new HttpResponse(null, { status: 404 }),
       ),
+      ...authorizationHandlers(projectPermissions, [tenantRole]),
     );
 
     await expect(provisionDescope(desired)).resolves.toMatchObject({
       changes: ["human-grant:unavailable"],
     });
+  });
+
+  it("grants the tenant role every capability the Worker enforces", () => {
+    const application = squawkApplication("tenant-1", "project");
+
+    expect(application.permissionsScopes.map((scope) => scope.name)).toEqual([...capabilityValues]);
+    expect(application.humanGrant.permissions).toEqual([...capabilityValues]);
+    expect(application.humanRole.name).toBe("Squawk Operator");
   });
 });

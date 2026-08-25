@@ -33,19 +33,43 @@ describe("retirement and append-only VEX", () => {
       vulnId: "OSV-1",
       status: "not_affected",
     });
-    expect(await listFindings(env.DB, tenant, null, false, false)).toHaveLength(0);
+    expect(
+      await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: false,
+        includeRetired: false,
+      }),
+    ).toHaveLength(0);
     await appendVex(env.DB, tenant, user, {
       packageName: "demo",
       ecosystem: "npm",
       vulnId: "OSV-1",
       status: "affected",
     });
-    expect(await listFindings(env.DB, tenant, null, false, false)).toHaveLength(1);
+    expect(
+      await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: false,
+        includeRetired: false,
+      }),
+    ).toHaveLength(1);
     const id = SbomIdSchema.parse("00000000-0000-4000-8000-000000000001");
     expect(await retireSbom(env.DB, tenant, id)).toBe(true);
     expect(await retireSbom(env.DB, tenant, id)).toBe(true);
-    expect(await listFindings(env.DB, tenant, null, false, false)).toHaveLength(0);
-    expect(await listFindings(env.DB, tenant, null, false, true)).toHaveLength(1);
+    expect(
+      await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: false,
+        includeRetired: false,
+      }),
+    ).toHaveLength(0);
+    expect(
+      await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: false,
+        includeRetired: true,
+      }),
+    ).toHaveLength(1);
     expect(
       await env.DB.prepare("SELECT COUNT(*) AS count FROM vex_statements").first<number>("count"),
     ).toBe(2);

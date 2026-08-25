@@ -8,7 +8,7 @@
     "format:go": "gofumpt -w matcher",
     "format:infra": "tofu -chdir=infra fmt -recursive",
     "lint": "biome lint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p client",
     "test:unit": "vitest run test/auth test/osv test/sbom test/smoke.test.ts",
     "test:integration": "vitest run test/acceptance test/findings test/infra test/integration",
     "test:e2e": "vitest run test/e2e",
@@ -22,7 +22,8 @@
     "check:types": "wrangler types && wrangler types --check",
     "check:go": "cd matcher && go mod tidy -diff && go mod verify && test -z \"$(gofumpt -l .)\" && golangci-lint run ./... && govulncheck ./... && go test -race -shuffle=on -count=1 ./...",
     "check:infra": "tofu -chdir=infra fmt -check -diff -recursive && tofu -chdir=infra init -backend=false -input=false -lockfile=readonly && tofu -chdir=infra validate -no-color && tofu -chdir=infra test && lock=$(mktemp) && trap 'rm -f \"$lock\"' EXIT && cp infra/.terraform.lock.hcl \"$lock\" && tofu -chdir=infra providers lock -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_amd64 -platform=darwin_arm64 && cmp -s \"$lock\" infra/.terraform.lock.hcl && tflint --chdir=infra --force --no-color && trivy config --misconfig-scanners terraform --severity HIGH,CRITICAL --exit-code 1 infra && terraform-docs markdown table --output-file README.md --output-mode inject --output-check infra",
-    "check": "bun run check:types && bun run build:matcher && bun run format:check && bun run lint && bun run typecheck && bun run check:go && bun run test:isolated && bun run check:infra"
+    "check": "bun run check:types && bun run build:matcher && bun run build:admin && bun run format:check && bun run lint && bun run typecheck && bun run check:go && bun run test:isolated && bun run check:infra",
+    "build:admin": "bun scripts/build-admin.ts"
   },
   "dependencies": {
     "@descope/node-sdk": "2.14.0",
@@ -33,9 +34,14 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
     "@cloudflare/vitest-pool-workers": "0.21.3",
+    "@descope/react-sdk": "3.2.1",
     "@types/node": "26.2.0",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
     "bun-types": "1.4.0",
     "msw": "2.15.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11",
     "wrangler": "4.125.0"

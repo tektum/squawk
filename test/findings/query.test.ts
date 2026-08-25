@@ -54,13 +54,35 @@ describe("indexed findings query", () => {
 
   it("applies suppression and retirement switches within the p95 target", async () => {
     const tenant = TenantIdSchema.parse("tenant");
-    expect(await listFindings(env.DB, tenant, null, false, false)).toHaveLength(99);
-    expect(await listFindings(env.DB, tenant, null, true, true)).toHaveLength(200);
-    expect(await listFindings(env.DB, tenant, "critical", true, true)).toHaveLength(0);
+    expect(
+      await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: false,
+        includeRetired: false,
+      }),
+    ).toHaveLength(99);
+    expect(
+      await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: true,
+        includeRetired: true,
+      }),
+    ).toHaveLength(200);
+    expect(
+      await listFindings(env.DB, tenant, {
+        severity: "critical",
+        includeSuppressed: true,
+        includeRetired: true,
+      }),
+    ).toHaveLength(0);
     const timings: number[] = [];
     for (let index = 0; index < 30; index += 1) {
       const started = performance.now();
-      await listFindings(env.DB, tenant, null, false, false);
+      await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: false,
+        includeRetired: false,
+      });
       timings.push(performance.now() - started);
     }
     timings.sort((left, right) => left - right);

@@ -36,6 +36,23 @@ curl -X POST https://WORKER/v1/operations/scheduled \
 The endpoint returns `204` only after the scheduled pipeline completes. It rejects
 missing tokens, principals without `operations.run`, and machine-only principals.
 
+## Admin panel
+
+`https://WORKER/admin` runs the Descope `sign-up-or-in` flow and, once signed in,
+exposes the same `/v1` surface the runbook drives by hand: inventory with backfill
+errors, findings with VEX, ingestion/advisory/dispatch jobs, sources, and the manual
+scheduled run. The shell is public; every row behind it needs a capability.
+
+Deployment reconciles the project permissions and a tenant role named
+`Squawk Operator` that carries all of them. Assigning that role to a person stays a
+console decision, so provisioning never touches user records: in
+**Descope console -> Users**, grant `Squawk Operator` in the Squawk tenant. Without
+it a real operator authenticates and is then refused every view, because a session
+JWT only carries permissions attached to a role.
+
+Reads use `pipeline.read`; the panel hides controls the token cannot exercise, and
+the Worker rejects them regardless.
+
 GitHub 5xx/rate-limit failures return a retryable webhook response and create no
 delivery receipt. Inspect inbound state with
 `SELECT * FROM github_deliveries ORDER BY created_at DESC`; failed backfills with

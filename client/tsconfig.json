@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["react", "react-dom"],
+    "jsx": "react-jsx",
+    "noEmit": true
+  },
+  "include": ["admin"]
+}

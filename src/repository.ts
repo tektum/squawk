@@ -1,7 +1,7 @@
 import {
-  SbomIdSchema,
   type Component,
   type SbomId,
+  SbomIdSchema,
   type TenantId,
   type UserId,
   type VexStatus,
@@ -175,6 +175,7 @@ export async function appendVex(
 }
 
 export type Finding = {
+  readonly sbom_id: string;
   readonly image_ref: string;
   readonly logical_image_ref: string;
   readonly platform: string;
@@ -184,16 +185,25 @@ export type Finding = {
   readonly vuln_id: string;
   readonly severity: string | null;
   readonly summary: string | null;
+  readonly detected_at: number;
+  readonly dispatched_at: number | null;
   readonly vex_status: VexStatus | null;
   readonly vex_justification: string | null;
+};
+
+export type FindingFilters = {
+  readonly severity: string | null;
+  readonly includeSuppressed: boolean;
+  readonly includeRetired: boolean;
+  readonly image?: string;
+  readonly limit?: number;
+  readonly offset?: number;
 };
 
 export async function listFindings(
   database: D1Database,
   tenantId: TenantId,
-  severity: string | null,
-  includeSuppressed: boolean,
-  includeRetired: boolean,
+  filters: FindingFilters,
 ): Promise<readonly Finding[]> {
   const statement = database
     .prepare(`WITH latest_vex AS (
@@ -201,13 +211,26 @@ export async function listFindings(
       ROW_NUMBER() OVER (PARTITION BY org_id, package_name, ecosystem, vuln_id ORDER BY created_at DESC, id DESC) AS row_number
     FROM vex_statements
   )
-  SELECT s.image_ref, s.logical_image_ref, s.platform, c.package_name, c.ecosystem, c.version,
-    f.vuln_id, v.severity, v.summary, x.status AS vex_status, x.justification AS vex_justification
+  SELECT s.id AS sbom_id, s.image_ref, s.logical_image_ref, s.platform, c.package_name, c.ecosystem, c.version,
+    f.vuln_id, v.severity, v.summary, f.detected_at, f.dispatched_at,
+    x.status AS vex_status, x.justification AS vex_justification
   FROM findings f JOIN components c ON c.id = f.component_id JOIN sboms s ON s.id = c.sbom_id
   JOIN vulnerabilities v ON v.id = f.vuln_id AND v.ecosystem = c.ecosystem AND v.package_name = c.package_name
   LEFT JOIN latest_vex x ON x.row_number = 1 AND x.org_id = f.org_id AND x.package_name = c.package_name AND x.ecosystem = c.ecosystem AND x.vuln_id = f.vuln_id
   WHERE f.org_id = ? AND (? = 1 OR s.retired_at IS NULL) AND (? IS NULL OR v.severity = ?)
-    AND (? = 1 OR COALESCE(x.status, '') NOT IN ('not_affected', 'fixed'))`)
-    .bind(tenantId, Number(includeRetired), severity, severity, Number(includeSuppressed));
+    AND (? = 1 OR COALESCE(x.status, '') NOT IN ('not_affected', 'fixed'))
+    AND (? IS NULL OR s.logical_image_ref = ?)
+  ORDER BY f.detected_at DESC, f.vuln_id LIMIT ? OFFSET ?`)
+    .bind(
+      tenantId,
+      Number(filters.includeRetired),
+      filters.severity,
+      filters.severity,
+      Number(filters.includeSuppressed),
+      filters.image ?? null,
+      filters.image ?? null,
+      filters.limit ?? 1000,
+      filters.offset ?? 0,
+    );
   return (await statement.all<Finding>()).results;
 }
