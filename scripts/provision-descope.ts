@@ -45,7 +45,6 @@ type Change =
   | "tenant:update"
   | "application:create"
   | "application:update";
-}
 
 export async function provisionDescope(rawInput: ProvisionInput): Promise<{
   readonly tenantId: string;

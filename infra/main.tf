@@ -45,13 +45,13 @@ variable "dispatch_enabled" {
   type    = bool
   default = true
 }
-# Descope provisioning is opt-in: the management routes it calls are unverified
-# against the live API, and a failure there blocks the whole worker deploy.
 variable "descope_provisioning_enabled" {
   type    = bool
   default = false
 }
 
+# Descope provisioning is opt-in: a failure inside its local-exec provisioner fails
+# the whole worker deploy, and its management routes are unverified against the live API.
 locals {
   worker_name         = "squawk-${var.environment}"
   descope_enabled     = var.descope_provisioning_enabled && var.descope_project_id != "" && var.descope_tenant_id != ""
