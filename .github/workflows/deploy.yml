@@ -52,6 +52,7 @@ jobs:
           TF_VAR_environment: ${{ github.event_name == 'push' && 'staging' || inputs.environment }}
           TF_VAR_worker_bundle_path: ../.tmp/worker-build/index.js
           TF_VAR_descope_project_id: ${{ secrets.DESCOPE_PROJECT_ID }}
+          TF_VAR_descope_provisioning_enabled: ${{ vars.DESCOPE_PROVISIONING_ENABLED || false }}
           TF_VAR_descope_tenant_id: ${{ secrets.DESCOPE_TENANT_ID }}
           DESCOPE_MANAGEMENT_KEY: ${{ secrets.DESCOPE_MANAGEMENT_KEY }}
       - name: Apply D1 migrations
@@ -79,6 +80,7 @@ jobs:
           TF_VAR_environment: ${{ github.event_name == 'push' && 'staging' || inputs.environment }}
           TF_VAR_worker_bundle_path: ../.tmp/worker-build/index.js
           TF_VAR_descope_project_id: ${{ secrets.DESCOPE_PROJECT_ID }}
+          TF_VAR_descope_provisioning_enabled: ${{ vars.DESCOPE_PROVISIONING_ENABLED || false }}
           TF_VAR_descope_tenant_id: ${{ secrets.DESCOPE_TENANT_ID }}
           TF_VAR_dispatch_enabled: ${{ github.event_name == 'push' || inputs.dispatch_enabled }}
           DESCOPE_MANAGEMENT_KEY: ${{ secrets.DESCOPE_MANAGEMENT_KEY }}
