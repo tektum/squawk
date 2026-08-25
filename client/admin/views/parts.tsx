@@ -68,9 +68,10 @@ export function Loaded<T>({
   return <>{children(resource.data)}</>;
 }
 
-/* A silently truncated list is misleading in a security console: say so when a view
-   returns exactly its limit, because rows beyond it exist and are not shown. */
+/* A silently truncated list is misleading in a security console. The endpoints report
+   no total, so this claims only what a full page proves: the limit was reached, and
+   further rows may exist beyond it. */
 export function Truncated({ shown, limit }: { shown: number; limit: number }) {
   if (shown < limit) return null;
-  return <p className="status risk">Showing the first {limit} rows; more exist.</p>;
+  return <p className="status risk">Showing the first {limit} rows; more may exist.</p>;
 }

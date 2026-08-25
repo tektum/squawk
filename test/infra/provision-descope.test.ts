@@ -260,6 +260,12 @@ describe("Descope management provisioning", () => {
     });
   });
 
+  it("refuses to send the management key to a plaintext endpoint", async () => {
+    await expect(
+      provisionDescope({ ...desired, baseUrl: "http://api.descope.test" }),
+    ).rejects.toThrow(/must use https/);
+  });
+
   it("grants the tenant role every capability the Worker enforces", () => {
     const application = squawkApplication("tenant-1", "project");
 
