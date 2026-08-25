@@ -118,15 +118,18 @@ export async function provisionDescope(rawInput: ProvisionInput): Promise<{
     .object({ apps: z.array(applicationSchema) })
     .parse(await applicationsResponse.json()).apps;
   // Session validation does not check `aud`, because Descope mints it as the
-  // project id that the project JWKS already binds. That is only safe while the
-  // project holds a single inbound application, so provisioning refuses to
-  // continue once a second one exists.
-  const foreign = applications.filter((candidate) => candidate.name !== input.application.name);
-  if (foreign.length > 0)
+  // project id that the project JWKS already binds. That holds only while the
+  // project has exactly one inbound application, so the count — not a mutable
+  // name — carries the invariant, and provisioning fails closed otherwise.
+  if (applications.length > 1)
     throw new Error(
       `Descope project holds ${applications.length} inbound applications; audience validation is required before adding another`,
     );
-  let application = applications.find((candidate) => candidate.name === input.application.name);
+  let application = applications[0];
+  if (application && application.name !== input.application.name)
+    throw new Error(
+      `Descope project holds inbound application ${application.id} that Squawk does not own; audience validation is required before sharing a project`,
+    );
   if (!application) {
     const created = await request(
       new URL("/v1/mgmt/thirdparty/app/create", input.baseUrl),

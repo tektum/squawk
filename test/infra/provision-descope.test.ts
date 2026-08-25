@@ -154,4 +154,31 @@ describe("Descope management provisioning", () => {
       /holds 2 inbound applications; audience validation is required/,
     );
   });
+
+  it("refuses a sole inbound application Squawk does not own", async () => {
+    // Names are mutable, so uniqueness is carried by the count; ownership of the
+    // single application is still checked before it is reconciled.
+    server.use(
+      http.get("https://api.descope.test/v1/mgmt/tenant", () =>
+        HttpResponse.json({ id: "tenant-1", name: desired.tenant.name }),
+      ),
+      http.get("https://api.descope.test/v1/mgmt/thirdparty/apps/load", () =>
+        HttpResponse.json({
+          apps: [
+            {
+              id: "app-9",
+              clientId: "client-9",
+              name: "Someone else's app",
+              description: "not squawk",
+              permissionsScopes: [],
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(provisionDescope(desired)).rejects.toThrow(
+      /inbound application app-9 that Squawk does not own/,
+    );
+  });
 });
