@@ -10,9 +10,9 @@ describe("vulnerable published image", () => {
   beforeEach(async () => {
     await env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)").run();
     await env.DB.prepare(
-      "INSERT INTO github_sources (installation_id,repository_id,org_id,repository_full_name,dispatch_workflow,created_at) VALUES (?,?,?,?,?,0)",
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,dispatch_workflow,dispatch_ref,created_at) VALUES (?,?,?,?,?,0)",
     )
-      .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "owner/demo", "monitor.yaml")
+      .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "monitor.yaml", "main")
       .run();
   });
 
@@ -31,6 +31,11 @@ describe("vulnerable published image", () => {
       url: `https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens`,
       status: 201,
       body: { token: "installation-token" },
+    });
+    respond({
+      url: `https://api.github.com/repositories/${REPOSITORY_ID}`,
+      status: 200,
+      body: { full_name: "owner/repo" },
     });
     respond({
       method: "POST",

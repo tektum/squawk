@@ -89,9 +89,7 @@ describe("D1 migration contract", () => {
 it("can migrate all tenant-owned rows to the real Descope tenant", async () => {
   await env.DB.batch([
     env.DB.prepare("INSERT INTO orgs VALUES ('stale','app',0)"),
-    env.DB.prepare(
-      "INSERT INTO github_sources VALUES ('1','2','stale',0,'owner/repo','monitor.yaml','main')",
-    ),
+    env.DB.prepare("INSERT INTO github_sources VALUES ('1','2','stale',0,'monitor.yaml','main')"),
     env.DB.prepare(
       "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('sbom','stale','image','logical','linux/amd64','digest','complete',0)",
     ),

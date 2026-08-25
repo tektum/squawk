@@ -13,9 +13,9 @@ describe("GitHub registry package webhook", () => {
   beforeEach(async () => {
     await env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)").run();
     await env.DB.prepare(
-      "INSERT INTO github_sources (installation_id,repository_id,org_id,repository_full_name,dispatch_workflow,created_at) VALUES (?,?,?,?,?,0)",
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,dispatch_workflow,dispatch_ref,created_at) VALUES (?,?,?,?,?,0)",
     )
-      .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "owner/demo", "monitor.yaml")
+      .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "monitor.yaml", "main")
       .run();
   });
 
@@ -203,7 +203,7 @@ describe("GitHub registry package webhook", () => {
     await env.DB.batch([
       env.DB.prepare("INSERT INTO orgs VALUES ('peer','app',0)"),
       env.DB.prepare(
-        "INSERT INTO github_sources (installation_id,repository_id,org_id,repository_full_name,dispatch_workflow,created_at) VALUES ('999','999','peer','peer/repo','monitor.yaml',0)",
+        "INSERT INTO github_sources (installation_id,repository_id,org_id,dispatch_workflow,dispatch_ref,created_at) VALUES ('999','999','peer','monitor.yaml','main',0)",
       ),
     ]);
     const first = await worker.fetch(

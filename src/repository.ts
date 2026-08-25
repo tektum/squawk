@@ -40,10 +40,16 @@ async function loadExisting(database: D1Database, tenantId: TenantId, request: I
     : { kind: "conflict" as const };
 }
 
+export type IngestSource = {
+  readonly installationId: string;
+  readonly repositoryId: string;
+};
+
 export async function ingestSboms(
   database: D1Database,
   tenantId: TenantId,
   requests: readonly IngestRequest[],
+  source?: IngestSource,
 ): Promise<IngestManyResult> {
   const prepared: {
     readonly current: Exclude<IngestResult, { readonly kind: "conflict" }> | null;
@@ -64,7 +70,7 @@ export async function ingestSboms(
     statements.push(
       database
         .prepare(
-          "INSERT INTO sboms (id, org_id, image_ref, logical_image_ref, platform, predicate_sha256, backfill_status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+          "INSERT INTO sboms (id, org_id, image_ref, logical_image_ref, platform, predicate_sha256, backfill_status, created_at, installation_id, repository_id) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
         )
         .bind(
           item.sbomId,
@@ -74,6 +80,8 @@ export async function ingestSboms(
           item.request.input.platform,
           item.request.predicateSha256,
           Date.now(),
+          source?.installationId ?? null,
+          source?.repositoryId ?? null,
         ),
     );
     for (const component of item.request.components)

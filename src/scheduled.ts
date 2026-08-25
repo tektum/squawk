@@ -127,6 +127,9 @@ async function executeScheduled(
       console.error("Scheduled backfill failed", { sbomId: id, error: describeError(error) });
     }
   }
+  // Later stages issue their own requests, so an expired deadline ends the run
+  // here instead of letting the remaining stages overrun the invocation.
+  if (deadline.expired) return;
   const cache = await env.DB.prepare(
     "SELECT MAX(cached_at) AS cached_at FROM osv_ecosystems",
   ).first<{ readonly cached_at: number | null }>();
@@ -188,6 +191,7 @@ async function executeScheduled(
       }
     }
   }
+  if (deadline.expired) return;
   try {
     await requeueAdvisoryJobs({
       database: env.DB,
