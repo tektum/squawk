@@ -113,29 +113,30 @@ describe("security faults and scheduled SLOs", () => {
       method: "POST",
       url: "https://osv.test/v1/querybatch",
       status: 200,
+      body: { results: [{ vulns: [{ id: "OSV-SLO", modified: modifiedAt }] }] },
+    });
+    respond({
+      url: "https://osv.test/npm/OSV-SLO.json",
+      status: 200,
       body: {
-        results: [
+        id: "OSV-SLO",
+        modified: modifiedAt,
+        affected: [
           {
-            vulns: [
-              {
-                id: "OSV-SLO",
-                modified: modifiedAt,
-                affected: [
-                  {
-                    package: { ecosystem: "npm", name: "demo" },
-                    ranges: [
-                      { type: "SEMVER", events: [{ introduced: "1.0.0" }, { fixed: "2.0.0" }] },
-                    ],
-                    versions: [],
-                  },
-                ],
-              },
-            ],
+            package: { ecosystem: "npm", name: "demo" },
+            ranges: [{ type: "SEMVER", events: [{ introduced: "1.0.0" }, { fixed: "2.0.0" }] }],
+            versions: [],
           },
         ],
       },
     });
-    await backfillSbom({ database: env.DB, sbomId: "pending", osvApiUrl: "https://osv.test", now });
+    await backfillSbom({
+      database: env.DB,
+      sbomId: "pending",
+      osvApiUrl: "https://osv.test",
+      osvBaseUrl: "https://osv.test",
+      now,
+    });
     const environment = await dispatchEnv();
     respond({
       method: "POST",

@@ -4,6 +4,14 @@ import { parseWebhook, sourceSchema, type WebhookEnv, WebhookError } from "./web
 
 export { WebhookError } from "./webhook-contract";
 
+/**
+ * Processes eligible GitHub container registry webhooks for multi-platform tagged images.
+ *
+ * @returns A `204` response for ignored events, a `200` response for existing deliveries,
+ * or a `202` response indicating accepted or pending ingestion.
+ * @throws `WebhookError` if the manifest digest is invalid, the source installation is
+ * unauthorized, or a delivery collision is detected.
+ */
 export async function handleGithubWebhook(request: Request, env: WebhookEnv): Promise<Response> {
   const { deliveryId, event } = await parseWebhook(request, env.GH_WEBHOOK_SECRET);
   const published = event.action === "published" || event.action === "updated";
@@ -46,7 +54,12 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
       .all<{ readonly id: string }>();
     for (const { id } of pending.results)
       env.EXECUTION_CONTEXT.waitUntil(
-        backfillSbom({ database: env.DB, sbomId: id, osvApiUrl: env.OSV_API_URL }),
+        backfillSbom({
+          database: env.DB,
+          sbomId: id,
+          osvApiUrl: env.OSV_API_URL,
+          osvBaseUrl: env.OSV_BASE_URL,
+        }),
       );
     return Response.json({ status: existing.status }, { status: 200 });
   }

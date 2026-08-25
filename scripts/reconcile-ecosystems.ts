@@ -7,6 +7,7 @@ const storedComponentSchema = z.object({
   purl: z.string().min(1),
   ecosystem: z.string(),
   matchable: z.number().int(),
+  version: z.string(),
 });
 const componentsSchema = z.array(z.object({ results: z.array(storedComponentSchema) }));
 
@@ -17,9 +18,15 @@ function quote(value: string) {
 }
 
 /**
- * The requeue statement is part of every plan, never conditional on the update
- * count: a previous run may have restated components and then failed before
- * requeueing, and repeating the reset is harmless.
+ * Builds SQL statements to reconcile stored component metadata and requeue live SBOMs for backfill.
+ *
+ * The requeue statement is part of every plan, never conditional on the update count: a previous run
+ * may have restated components and then failed before requeueing, and repeating the reset is
+ * harmless. Findings and vulnerabilities are derived from the restated ecosystem and version, so
+ * they are rebuilt too.
+ *
+ * @param components - Stored components whose ecosystem, matchability, and version values should be reconciled
+ * @returns The component update statements and unconditional cleanup and SBOM requeue statement
  */
 export function reconciliationPlan(components: readonly StoredComponent[]): {
   readonly updates: readonly string[];
@@ -29,14 +36,22 @@ export function reconciliationPlan(components: readonly StoredComponent[]): {
   for (const component of components) {
     const resolved = parsePurl(component.purl);
     const matchable = resolved.matchable ? 1 : 0;
-    if (resolved.ecosystem === component.ecosystem && matchable === component.matchable) continue;
+    const version = resolved.version ?? component.version;
+    if (
+      resolved.ecosystem === component.ecosystem &&
+      matchable === component.matchable &&
+      version === component.version
+    )
+      continue;
     updates.push(
-      `UPDATE components SET ecosystem=${quote(resolved.ecosystem)},matchable=${matchable} WHERE id=${component.id};`,
+      `UPDATE components SET ecosystem=${quote(resolved.ecosystem)},matchable=${matchable},version=${quote(version)} WHERE id=${component.id};`,
     );
   }
   return {
     updates,
-    requeue: `DELETE FROM matching_errors;
+    requeue: `DELETE FROM findings;
+DELETE FROM vulnerabilities;
+DELETE FROM matching_errors;
 UPDATE sboms SET backfill_status='pending',backfill_error=NULL WHERE retired_at IS NULL;`,
   };
 }
@@ -59,7 +74,10 @@ if (import.meta.main) {
   const [database] = inputSchema.parse(process.argv.slice(2));
   const parsed = componentsSchema.parse(
     JSON.parse(
-      await execute(database, "SELECT id,purl,ecosystem,matchable FROM components ORDER BY id"),
+      await execute(
+        database,
+        "SELECT id,purl,ecosystem,matchable,version FROM components ORDER BY id",
+      ),
     ),
   );
   const components = parsed[0]?.results ?? [];

@@ -7,22 +7,41 @@ const alpine = "pkg:apk/alpine/busybox@1.37.0-r61?arch=x86_64&distro=alpine-3.21
 describe("ecosystem reconciliation plan", () => {
   it("restates components stored under the wrong ecosystem", () => {
     const plan = reconciliationPlan([
-      { id: 1, purl: wolfi, ecosystem: "Alpine", matchable: 1 },
-      { id: 2, purl: alpine, ecosystem: "Alpine", matchable: 1 },
+      { id: 1, purl: wolfi, ecosystem: "Alpine", matchable: 1, version: "20260413-r0" },
+      { id: 2, purl: alpine, ecosystem: "Alpine", matchable: 1, version: "1.37.0-r61" },
     ]);
 
     expect(plan.updates).toEqual([
-      "UPDATE components SET ecosystem='Wolfi',matchable=1 WHERE id=1;",
-      "UPDATE components SET ecosystem='Alpine:v3.21',matchable=1 WHERE id=2;",
+      "UPDATE components SET ecosystem='Wolfi',matchable=1,version='20260413-r0' WHERE id=1;",
+      "UPDATE components SET ecosystem='Alpine:v3.21',matchable=1,version='1.37.0-r61' WHERE id=2;",
     ]);
   });
 
-  it("requeues re-backfill even when every component is already correct", () => {
-    const plan = reconciliationPlan([{ id: 1, purl: wolfi, ecosystem: "Wolfi", matchable: 1 }]);
+  it("restates a decorated version to the canonical purl version", () => {
+    const plan = reconciliationPlan([
+      {
+        id: 5,
+        purl: "pkg:golang/stdlib@1.26.5",
+        ecosystem: "Go",
+        matchable: 1,
+        version: "go1.26.5",
+      },
+    ]);
+
+    expect(plan.updates).toEqual([
+      "UPDATE components SET ecosystem='Go',matchable=1,version='1.26.5' WHERE id=5;",
+    ]);
+  });
+
+  it("rebuilds derived findings even when every component is already correct", () => {
+    const plan = reconciliationPlan([
+      { id: 1, purl: wolfi, ecosystem: "Wolfi", matchable: 1, version: "20260413-r0" },
+    ]);
 
     expect(plan.updates).toEqual([]);
+    expect(plan.requeue).toContain("DELETE FROM findings");
+    expect(plan.requeue).toContain("DELETE FROM vulnerabilities");
     expect(plan.requeue).toContain("UPDATE sboms SET backfill_status='pending'");
-    expect(plan.requeue).toContain("DELETE FROM matching_errors");
   });
 
   it("restates a component whose matchability changed", () => {
@@ -32,11 +51,12 @@ describe("ecosystem reconciliation plan", () => {
         purl: "pkg:apk/alpine/busybox@1.37.0-r61",
         ecosystem: "Alpine",
         matchable: 1,
+        version: "1.37.0-r61",
       },
     ]);
 
     expect(plan.updates).toEqual([
-      "UPDATE components SET ecosystem='unknown:apk',matchable=0 WHERE id=7;",
+      "UPDATE components SET ecosystem='unknown:apk',matchable=0,version='1.37.0-r61' WHERE id=7;",
     ]);
   });
 });

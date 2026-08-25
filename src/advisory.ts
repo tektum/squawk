@@ -39,6 +39,13 @@ const advisorySchema = z.object({
 });
 const componentSchema = z.object({ id: z.number(), org_id: z.string(), version: z.string() });
 
+/**
+ * Processes a queued advisory job and records its completion or failure.
+ *
+ * @param message - The advisory queue message identifying the job.
+ * @param now - The timestamp used for lease and job updates.
+ * @param osvBaseUrl - The base URL of the OSV advisory service.
+ */
 export async function processAdvisory(options: {
   readonly database: D1Database;
   readonly message: AdvisoryMessage;
@@ -60,16 +67,13 @@ export async function processAdvisory(options: {
     .first();
   const job = jobSchema.parse(rawJob);
   try {
-    const response = await fetch(
-      `${options.osvBaseUrl}/${encodeURIComponent(job.ecosystem)}/${encodeURIComponent(job.advisory_id)}.json`,
-      { signal: AbortSignal.timeout(10_000) },
-    );
-    if (!response.ok) throw new Error(`OSV advisory failed (${response.status})`);
-    const advisory = advisorySchema.parse(await response.json());
-    for (const affected of advisory.affected.filter(
-      (entry) => entry.package.ecosystem.split(":")[0] === job.ecosystem,
-    ))
-      await persistAffected(options.database, job.ecosystem, advisory, affected, now);
+    await resolveAdvisory({
+      database: options.database,
+      ecosystem: job.ecosystem,
+      advisoryId: job.advisory_id,
+      osvBaseUrl: options.osvBaseUrl,
+      now,
+    });
     await options.database
       .prepare(
         "UPDATE osv_advisory_jobs SET status='complete',error=NULL WHERE job_id=? AND modified_at=?",
@@ -88,6 +92,34 @@ export async function processAdvisory(options: {
   }
 }
 
+/** Fetches one advisory revision and records its vulnerabilities and findings. */
+export async function resolveAdvisory(options: {
+  readonly database: D1Database;
+  readonly ecosystem: string;
+  readonly advisoryId: string;
+  readonly osvBaseUrl: string;
+  readonly now: number;
+}): Promise<void> {
+  const response = await fetch(
+    `${options.osvBaseUrl}/${encodeURIComponent(options.ecosystem)}/${encodeURIComponent(options.advisoryId)}.json`,
+    { signal: AbortSignal.timeout(10_000) },
+  );
+  if (!response.ok) throw new Error(`OSV advisory failed (${response.status})`);
+  const advisory = advisorySchema.parse(await response.json());
+  for (const affected of advisory.affected.filter(
+    (entry) => entry.package.ecosystem.split(":")[0] === options.ecosystem,
+  ))
+    await persistAffected(options.database, options.ecosystem, advisory, affected, options.now);
+}
+
+/**
+ * Persists an advisory's affected package data and records matching components.
+ *
+ * @param ecosystem - The package ecosystem associated with the advisory
+ * @param advisory - The advisory metadata to persist
+ * @param affected - The affected package, ranges, and versions to evaluate
+ * @param now - The timestamp for new findings and matching errors
+ */
 async function persistAffected(
   database: D1Database,
   ecosystem: string,

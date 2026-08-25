@@ -147,6 +147,44 @@ describe("SBOM predicate parser", () => {
     expect(components.map((component) => component.ecosystem)).toEqual(["Debian:12", "Debian"]);
   });
 
+  it("prefers the canonical purl version over a decorated SPDX versionInfo", () => {
+    const [component] = parsePredicate({
+      spdxVersion: "SPDX-2.3",
+      packages: [
+        {
+          name: "stdlib",
+          versionInfo: "go1.26.5",
+          externalRefs: [{ referenceType: "purl", referenceLocator: "pkg:golang/stdlib@1.26.5" }],
+        },
+      ],
+    });
+
+    expect(component).toMatchObject({ ecosystem: "Go", version: "1.26.5", matchable: true });
+  });
+
+  it("accepts a PURL without a version and uses the document version", () => {
+    const [component] = parsePredicate({
+      bomFormat: "CycloneDX",
+      components: [{ name: "example", version: "1.0.0", purl: "pkg:npm/example" }],
+    });
+
+    expect(component).toMatchObject({
+      ecosystem: "npm",
+      packageName: "example",
+      version: "1.0.0",
+      matchable: true,
+    });
+  });
+
+  it("rejects invalid percent encoding outside the package name", () => {
+    expect(() =>
+      parsePredicate({
+        bomFormat: "CycloneDX",
+        components: [{ name: "example", version: "1.0.0", purl: "pkg:npm/%ZZ/example@1.0.0" }],
+      }),
+    ).toThrow("invalid SBOM predicate: purl has invalid percent encoding");
+  });
+
   it("parses exactly 200 mixed CycloneDX components", () => {
     const ecosystems = ["deb", "npm", "pypi"] as const;
     const components = parsePredicate({

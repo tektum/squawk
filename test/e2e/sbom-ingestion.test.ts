@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { backfillSbom } from "../../src/backfill";
+import { SubrequestBudget } from "../../src/budget";
 import { TenantIdSchema } from "../../src/domain";
 import { ingestSbom, ingestSboms } from "../../src/repository";
 import { parsePredicate, sbomInputSchema } from "../../src/sbom";
@@ -45,26 +46,21 @@ describe("SBOM ingestion and historical backfill", () => {
       method: "POST",
       url: "https://osv.test/v1/querybatch",
       status: 200,
+      body: { results: [{ vulns: [{ id: "OSV-OLD", modified: "2020-01-01T00:00:00Z" }] }] },
+    });
+    respond({
+      url: "https://osv.test/npm/OSV-OLD.json",
+      status: 200,
       body: {
-        results: [
+        id: "OSV-OLD",
+        modified: "2020-01-01T00:00:00Z",
+        summary: "old advisory",
+        severity: [{ score: "high" }],
+        affected: [
           {
-            vulns: [
-              {
-                id: "OSV-OLD",
-                modified: "2020-01-01T00:00:00Z",
-                summary: "old advisory",
-                severity: [{ type: "CVSS_V3", score: "high" }],
-                affected: [
-                  {
-                    package: { ecosystem: "npm", name: "demo" },
-                    ranges: [
-                      { type: "SEMVER", events: [{ introduced: "1.0.0" }, { fixed: "2.0.0" }] },
-                    ],
-                    versions: [],
-                  },
-                ],
-              },
-            ],
+            package: { ecosystem: "npm", name: "demo" },
+            ranges: [{ type: "SEMVER", events: [{ introduced: "1.0.0" }, { fixed: "2.0.0" }] }],
+            versions: [],
           },
         ],
       },
@@ -73,6 +69,7 @@ describe("SBOM ingestion and historical backfill", () => {
       database: env.DB,
       sbomId: created.sbomId,
       osvApiUrl: "https://osv.test",
+      osvBaseUrl: "https://osv.test",
       now: 1,
     });
 
@@ -188,6 +185,7 @@ describe("SBOM ingestion and historical backfill", () => {
       database: env.DB,
       sbomId: "unmatchable",
       osvApiUrl: "https://osv.test",
+      osvBaseUrl: "https://osv.test",
       now: 1,
     });
 
@@ -213,6 +211,7 @@ describe("SBOM ingestion and historical backfill", () => {
       database: env.DB,
       sbomId: "stale",
       osvApiUrl: "https://osv.test",
+      osvBaseUrl: "https://osv.test",
       now: 1_300_000,
     });
 
@@ -221,5 +220,74 @@ describe("SBOM ingestion and historical backfill", () => {
         "backfill_status",
       ),
     ).toBe("complete");
+  });
+
+  it("registers every advisory and defers the ones the budget cannot resolve", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('deferred','tenant','image','logical','linux/amd64','digest','pending',0)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (91,'deferred','openssl','Wolfi','3.6.3-r3','pkg:apk/wolfi/openssl@3.6.3-r3?distro=wolfi',1)",
+      ),
+    ]);
+    respond({
+      method: "POST",
+      url: "https://osv.test/v1/querybatch",
+      status: 200,
+      body: {
+        results: [
+          {
+            vulns: [
+              { id: "CGA-first", modified: "2026-08-01T00:00:00Z" },
+              { id: "CGA-second", modified: "2026-08-02T00:00:00Z" },
+            ],
+          },
+        ],
+      },
+    });
+    respond({
+      url: "https://osv.test/Wolfi/CGA-first.json",
+      status: 200,
+      body: {
+        id: "CGA-first",
+        modified: "2026-08-01T00:00:00Z",
+        affected: [
+          {
+            package: { ecosystem: "Wolfi", name: "openssl" },
+            ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "3.6.3-r4" }] }],
+            versions: [],
+          },
+        ],
+      },
+    });
+
+    await backfillSbom({
+      database: env.DB,
+      sbomId: "deferred",
+      osvApiUrl: "https://osv.test",
+      osvBaseUrl: "https://osv.test",
+      now: 1,
+      budget: new SubrequestBudget(3),
+    });
+
+    await expect(
+      env.DB.prepare("SELECT status FROM osv_advisory_jobs WHERE advisory_id='CGA-first'").first(
+        "status",
+      ),
+    ).resolves.toBe("complete");
+    await expect(
+      env.DB.prepare("SELECT status FROM osv_advisory_jobs WHERE advisory_id='CGA-second'").first(
+        "status",
+      ),
+    ).resolves.toBe("pending");
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM findings").first<number>("count"),
+    ).resolves.toBe(1);
+    await expect(
+      env.DB.prepare("SELECT backfill_status FROM sboms WHERE id='deferred'").first(
+        "backfill_status",
+      ),
+    ).resolves.toBe("complete");
   });
 });

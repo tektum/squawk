@@ -120,36 +120,70 @@ function ecosystemFor(
   return { ecosystem: `unknown:${purlType}`, matchable: false };
 }
 
+/**
+ * Parses a package URL into package identity and ecosystem metadata.
+ *
+ * @param purl - The package URL to parse
+ * @returns The decoded package name, ecosystem, matchability, and optional version
+ * @throws `PredicateError` if the package URL is malformed or contains invalid percent encoding
+ */
 export function parsePurl(purl: string): {
   readonly packageName: string;
   readonly ecosystem: string;
   readonly matchable: boolean;
+  readonly version: string | undefined;
 } {
-  const match = /^pkg:([^/]+)\/(.+)@/.exec(purl);
+  const match = /^pkg:([^/?#]+)\/([^?#]+)/.exec(purl);
   if (!match) throw new PredicateError("unparsable purl");
-  const [, purlType, packagePath] = match;
-  const segments = packagePath?.split("/");
-  const rawPackageName = segments?.at(-1);
-  if (!purlType || !segments || !rawPackageName)
-    throw new PredicateError("purl missing package type or name");
+  const [, purlType, pathWithVersion] = match;
+  if (!purlType || !pathWithVersion) throw new PredicateError("unparsable purl");
+  // A purl version is optional; without one the document's own version is used.
+  const separator = pathWithVersion.lastIndexOf("@");
+  if (separator === 0) throw new PredicateError("purl missing package type or name");
+  const packagePath = separator < 0 ? pathWithVersion : pathWithVersion.slice(0, separator);
+  const segments = packagePath.split("/");
+  const rawPackageName = segments.at(-1);
+  if (!rawPackageName) throw new PredicateError("purl missing package type or name");
   let packageName: string;
+  let purlVersion: string;
   try {
+    // Validate the whole purl, not just the fields read below: a malformed
+    // namespace still steers ecosystem resolution.
+    decodeURIComponent(purl);
     packageName = decodeURIComponent(rawPackageName);
+    purlVersion = separator < 0 ? "" : decodeURIComponent(pathWithVersion.slice(separator + 1));
   } catch {
     throw new PredicateError("purl has invalid percent encoding");
   }
   const qualifiers = new URLSearchParams(purl.split("#")[0]?.split("?")[1] ?? "");
   return {
     packageName,
+    // The purl carries the canonical version OSV ranges against; SPDX versionInfo
+    // may be decorated (Go reports "go1.26.5"), which OSV cannot range-check.
+    version: purlVersion === "" ? undefined : purlVersion,
     ...ecosystemFor(purlType, segments.at(-2), qualifiers.get("distro") ?? undefined),
   };
 }
 
+/**
+ * Creates a component from a package URL and fallback version.
+ *
+ * @param purl - The package URL identifying the component
+ * @param version - The version to use when the package URL does not specify one
+ * @returns The component represented by the package URL and resolved version
+ */
 function componentFrom(purl: string, version: string): Component {
-  const parsed = parsePurl(purl);
-  return { ...parsed, version, purl };
+  const { version: purlVersion, ...parsed } = parsePurl(purl);
+  return { ...parsed, version: purlVersion ?? version, purl };
 }
 
+/**
+ * Parses a CycloneDX or SPDX predicate into package components.
+ *
+ * @param predicate - The predicate containing CycloneDX components or SPDX packages.
+ * @returns The parsed package components.
+ * @throws PredicateError If the predicate contains no package components or duplicate package identities.
+ */
 export function parsePredicate(predicate: unknown): readonly Component[] {
   const cyclonedx = cyclonedxPredicateSchema.safeParse(predicate);
   const components = cyclonedx.success

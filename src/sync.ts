@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AdvisoryMessage } from "./advisory";
-import { sha256 } from "./digest";
+import { registerAdvisoryJobs } from "./advisory-jobs";
 
 const cursorSchema = z.object({ last_synced_at: z.string(), boundary_ids: z.string() });
 const feedRowSchema = z.object({ modified: z.string().datetime(), id: z.string().min(1) });
@@ -16,6 +16,13 @@ export type DiscoveryOptions = {
   readonly maxChunks?: number;
 };
 
+/**
+ * Discovers modified OSV advisories and queues jobs for processing.
+ *
+ * @param options - Configuration for the database, ecosystem, OSV feed, queue, and batch limit
+ * @returns The number of advisories selected for processing
+ * @throws If the OSV modified-advisory feed responds unsuccessfully
+ */
 export async function discoverAdvisories(options: DiscoveryOptions): Promise<number> {
   const rawCursor = await options.database
     .prepare("SELECT last_synced_at,boundary_ids FROM sync_cursors WHERE ecosystem=?")
@@ -50,22 +57,15 @@ export async function discoverAdvisories(options: DiscoveryOptions): Promise<num
   const selected = rows.slice(0, maxRows);
   for (let offset = 0; offset < selected.length; offset += 100) {
     const chunk = selected.slice(offset, offset + 100);
-    const messages = await Promise.all(
-      chunk.map(async (row) => {
-        const jobId = await sha256([options.ecosystem, row.id, row.modified].join("\u0000"));
-        return { jobId, row };
-      }),
+    const registered = await registerAdvisoryJobs(
+      options.database,
+      chunk.map((row) => ({
+        ecosystem: options.ecosystem,
+        advisoryId: row.id,
+        modifiedAt: row.modified,
+      })),
     );
-    await options.database.batch(
-      messages.map(({ jobId, row }) =>
-        options.database
-          .prepare(
-            "INSERT INTO osv_advisory_jobs (job_id,ecosystem,advisory_id,modified_at,status) VALUES (?,?,?,?,'pending') ON CONFLICT(ecosystem,advisory_id) DO UPDATE SET job_id=excluded.job_id,modified_at=excluded.modified_at,status=CASE WHEN excluded.modified_at>osv_advisory_jobs.modified_at THEN 'pending' ELSE osv_advisory_jobs.status END,error=CASE WHEN excluded.modified_at>osv_advisory_jobs.modified_at THEN NULL ELSE osv_advisory_jobs.error END",
-          )
-          .bind(jobId, options.ecosystem, row.id, row.modified),
-      ),
-    );
-    await options.queue.sendBatch(messages.map(({ jobId }) => ({ body: { jobId } })));
+    await options.queue.sendBatch(registered.map(({ jobId }) => ({ body: { jobId } })));
     await checkpoint(options.database, options.ecosystem, cursor, rows, offset + chunk.length);
   }
   return selected.length;

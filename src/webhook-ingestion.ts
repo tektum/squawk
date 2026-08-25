@@ -34,6 +34,12 @@ export async function enqueueIngestion(env: WebhookEnv, job: IngestionJob, now =
     )
     .run();
 }
+/**
+ * Records an accepted ingestion delivery and removes the corresponding ingestion job.
+ *
+ * @param job - The ingestion job to finalize
+ * @param now - The timestamp to use for delivery creation and completion
+ */
 async function finishIngestion(env: Pick<WebhookEnv, "DB">, job: IngestionJob, now: number) {
   await env.DB.batch([
     env.DB.prepare(
@@ -54,8 +60,17 @@ async function finishIngestion(env: Pick<WebhookEnv, "DB">, job: IngestionJob, n
   ]);
 }
 
+/**
+ * Processes a pending image ingestion job and advances it through registry discovery and SBOM ingestion.
+ *
+ * @param job - The pending image ingestion job to process
+ * @param now - Timestamp used to record the processing attempt
+ * @param budget - Optional limit for registry and backfill subrequests
+ * @returns `"pending"` if more registry results remain, `"ignored"` if the job has no usable statements, or `"complete"` when ingestion finishes
+ * @throws WebhookError If the repository is not configured, a matching SPDX statement is missing, or platform submissions conflict
+ */
 export async function ingestPendingImage(
-  env: Pick<WebhookEnv, "DB" | "OSV_API_URL"> & {
+  env: Pick<WebhookEnv, "DB" | "OSV_API_URL" | "OSV_BASE_URL"> & {
     readonly EXECUTION_CONTEXT?: ExecutionContext;
   },
   job: IngestionJob,
@@ -182,6 +197,7 @@ export async function ingestPendingImage(
       database: env.DB,
       sbomId,
       osvApiUrl: env.OSV_API_URL,
+      osvBaseUrl: env.OSV_BASE_URL,
       ...(budget ? { budget } : {}),
     }),
   );
