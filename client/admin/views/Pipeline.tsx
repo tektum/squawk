@@ -1,10 +1,15 @@
 import { useResource } from "../api";
 import { formatTime } from "../format";
-import type { Jobs, Source } from "../types";
-import { Loaded, Section, Table } from "./parts";
+import { jobsSchema, sourcesSchema } from "../schemas";
+import { Loaded, Section, Table, Truncated } from "./parts";
+
+const jobLimit = 100;
 
 export function JobsView({ orgId }: { orgId: string }) {
-  const resource = useResource<Jobs>(`/v1/orgs/${encodeURIComponent(orgId)}/jobs?limit=100`);
+  const resource = useResource(
+    `/v1/orgs/${encodeURIComponent(orgId)}/jobs?limit=${jobLimit}`,
+    jobsSchema,
+  );
   return (
     <Loaded resource={resource}>
       {(data) => (
@@ -24,6 +29,7 @@ export function JobsView({ orgId }: { orgId: string }) {
                 ],
               }))}
             />
+            <Truncated shown={data.ingestion.length} limit={jobLimit} />
           </Section>
           <Section title="Advisory jobs">
             <Table
@@ -39,6 +45,7 @@ export function JobsView({ orgId }: { orgId: string }) {
                 ],
               }))}
             />
+            <Truncated shown={data.advisories.length} limit={jobLimit} />
           </Section>
           <Section title="Dispatch deliveries">
             <Table
@@ -55,6 +62,7 @@ export function JobsView({ orgId }: { orgId: string }) {
                 ],
               }))}
             />
+            <Truncated shown={data.dispatch.length} limit={jobLimit} />
           </Section>
           <Section title="Matching errors">
             <Table
@@ -70,6 +78,7 @@ export function JobsView({ orgId }: { orgId: string }) {
                 ],
               }))}
             />
+            <Truncated shown={data.matching_errors.length} limit={jobLimit} />
           </Section>
         </>
       )}
@@ -78,9 +87,7 @@ export function JobsView({ orgId }: { orgId: string }) {
 }
 
 export function Sources({ orgId }: { orgId: string }) {
-  const resource = useResource<{ sources: readonly Source[] }>(
-    `/v1/orgs/${encodeURIComponent(orgId)}/sources`,
-  );
+  const resource = useResource(`/v1/orgs/${encodeURIComponent(orgId)}/sources`, sourcesSchema);
   return (
     <Loaded resource={resource}>
       {(data) => (

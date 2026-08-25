@@ -1,5 +1,6 @@
 import { getSessionToken, isSessionTokenExpired, refresh } from "@descope/react-sdk/flows";
 import { useEffect, useState } from "react";
+import type * as z from "zod/mini";
 
 export class ApiError extends Error {
   readonly name = "ApiError";
@@ -34,8 +35,10 @@ async function call(method: string, path: string, body?: unknown): Promise<Respo
   throw new ApiError(response.status, detail.error ?? response.statusText);
 }
 
-export async function get<T>(path: string): Promise<T> {
-  return (await (await call("GET", path)).json()) as T;
+export async function get<T>(path: string, schema: z.ZodMiniType<T>): Promise<T> {
+  const parsed = schema.safeParse(await (await call("GET", path)).json());
+  if (!parsed.success) throw new ApiError(502, "Unexpected response from Squawk");
+  return parsed.data;
 }
 
 export async function send(method: string, path: string, body?: unknown): Promise<void> {
@@ -48,14 +51,14 @@ export type Resource<T> = {
   readonly loading: boolean;
 };
 
-export function useResource<T>(path: string, reloadKey = 0): Resource<T> {
+export function useResource<T>(path: string, schema: z.ZodMiniType<T>, reloadKey = 0): Resource<T> {
   const [state, setState] = useState<Resource<T>>({ data: null, error: null, loading: true });
   useEffect(() => {
     let live = true;
     const url =
       reloadKey === 0 ? path : `${path}${path.includes("?") ? "&" : "?"}reload=${reloadKey}`;
     setState((current) => ({ ...current, loading: true }));
-    get<T>(url)
+    get(url, schema)
       .then((data) => live && setState({ data, error: null, loading: false }))
       .catch(
         (error: unknown) =>
@@ -74,6 +77,6 @@ export function useResource<T>(path: string, reloadKey = 0): Resource<T> {
     return () => {
       live = false;
     };
-  }, [path, reloadKey]);
+  }, [path, schema, reloadKey]);
   return state;
 }

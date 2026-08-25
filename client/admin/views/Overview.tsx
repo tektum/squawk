@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { send, useResource } from "../api";
 import { countsLine, relativeAge, total } from "../format";
-import type { Overview as OverviewPayload } from "../types";
+import { overviewSchema } from "../schemas";
 import { Field, Loaded, Section, Table } from "./parts";
 
 export function Overview({ orgId, canRun }: { orgId: string; canRun: boolean }) {
   const [reloadKey, setReloadKey] = useState(0);
-  const resource = useResource<OverviewPayload>(
+  const resource = useResource(
     `/v1/orgs/${encodeURIComponent(orgId)}/overview`,
+    overviewSchema,
     reloadKey,
   );
   return (

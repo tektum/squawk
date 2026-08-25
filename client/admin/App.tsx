@@ -1,7 +1,7 @@
 import { Descope, useDescope, useSession } from "@descope/react-sdk/flows";
 import { useCallback, useState } from "react";
 import { useResource } from "./api";
-import type { Me } from "./types";
+import { type Me, meSchema } from "./schemas";
 import { Findings } from "./views/Findings";
 import { Images } from "./views/Images";
 import { Overview } from "./views/Overview";
@@ -27,7 +27,7 @@ export function App() {
 /* `/v1/me` rather than the JWT's own claims: the Worker decides which capabilities it
    honours, so the panel shows exactly the controls the API will accept. */
 function Panel() {
-  const resource = useResource<Me>("/v1/me");
+  const resource = useResource("/v1/me", meSchema);
   return <Loaded resource={resource}>{(me) => <Console me={me} />}</Loaded>;
 }
 

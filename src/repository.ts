@@ -220,7 +220,7 @@ export async function listFindings(
   WHERE f.org_id = ? AND (? = 1 OR s.retired_at IS NULL) AND (? IS NULL OR v.severity = ?)
     AND (? = 1 OR COALESCE(x.status, '') NOT IN ('not_affected', 'fixed'))
     AND (? IS NULL OR s.logical_image_ref = ?)
-  ORDER BY f.detected_at DESC, f.vuln_id LIMIT ? OFFSET ?`)
+  ORDER BY f.detected_at DESC, f.vuln_id, c.id LIMIT ? OFFSET ?`)
     .bind(
       tenantId,
       Number(filters.includeRetired),

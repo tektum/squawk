@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { send, useResource } from "../api";
 import { formatTime, shortRef } from "../format";
-import type { Image, ImageDetail } from "../types";
-import { Field, Loaded, Section, Table, Tag } from "./parts";
+import { type Image, imageDetailSchema, imagesSchema } from "../schemas";
+import { Field, Loaded, Section, Table, Tag, Truncated } from "./parts";
+
+const imageLimit = 200;
 
 function statusTone(image: Image): string {
   if (image.retired_at) return "muted";
@@ -13,8 +15,9 @@ function statusTone(image: Image): string {
 export function Images({ orgId, canManage }: { orgId: string; canManage: boolean }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const resource = useResource<{ images: readonly Image[] }>(
-    `/v1/orgs/${encodeURIComponent(orgId)}/images?limit=200&include_retired=true`,
+  const resource = useResource(
+    `/v1/orgs/${encodeURIComponent(orgId)}/images?limit=${imageLimit}&include_retired=true`,
+    imagesSchema,
     reloadKey,
   );
   if (selected) return <Detail orgId={orgId} sbomId={selected} onBack={() => setSelected(null)} />;
@@ -67,6 +70,7 @@ export function Images({ orgId, canManage }: { orgId: string; canManage: boolean
               ],
             }))}
           />
+          <Truncated shown={data.images.length} limit={imageLimit} />
         </Section>
       )}
     </Loaded>
@@ -94,8 +98,9 @@ function Retire({ sbomId, onDone }: { sbomId: string; onDone: () => void }) {
 }
 
 function Detail({ orgId, sbomId, onBack }: { orgId: string; sbomId: string; onBack: () => void }) {
-  const resource = useResource<ImageDetail>(
+  const resource = useResource(
     `/v1/orgs/${encodeURIComponent(orgId)}/images/${encodeURIComponent(sbomId)}`,
+    imageDetailSchema,
   );
   return (
     <>

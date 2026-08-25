@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
-import { http, HttpResponse } from "msw";
 import { exportPKCS8, generateKeyPair } from "jose";
+import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dispatchPending } from "../../src/dispatch";
 import { runScheduled } from "../../src/scheduled";

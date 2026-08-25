@@ -1,15 +1,18 @@
 import { useState } from "react";
 import { send, useResource } from "../api";
 import { formatTime, severityRank, shortRef } from "../format";
-import type { Finding } from "../types";
-import { Loaded, Section, Table, Tag } from "./parts";
+import { type Finding, findingsSchema } from "../schemas";
+import { Loaded, Section, Table, Tag, Truncated } from "./parts";
+
+const findingLimit = 500;
 
 const vexStatuses = ["not_affected", "affected", "fixed", "under_investigation"] as const;
 
 export function Findings({ orgId, canAssess }: { orgId: string; canAssess: boolean }) {
   const [reloadKey, setReloadKey] = useState(0);
-  const resource = useResource<{ findings: readonly Finding[] }>(
-    `/v1/orgs/${encodeURIComponent(orgId)}/findings?include_suppressed=true&limit=500`,
+  const resource = useResource(
+    `/v1/orgs/${encodeURIComponent(orgId)}/findings?include_suppressed=true&limit=${findingLimit}`,
+    findingsSchema,
     reloadKey,
   );
   return (
@@ -62,6 +65,7 @@ export function Findings({ orgId, canAssess }: { orgId: string; canAssess: boole
                 ],
               }))}
             />
+            <Truncated shown={findings.length} limit={findingLimit} />
           </Section>
         );
       }}

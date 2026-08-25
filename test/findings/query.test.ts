@@ -96,4 +96,22 @@ describe("indexed findings query", () => {
       true,
     );
   });
+
+  it("pages without dropping or repeating a row when findings share a timestamp", async () => {
+    const tenant = TenantIdSchema.parse("tenant");
+    const seen: string[] = [];
+    for (let offset = 0; offset < 200; offset += 10) {
+      const page = await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: true,
+        includeRetired: true,
+        limit: 10,
+        offset,
+      });
+      seen.push(...page.map((finding) => `${finding.sbom_id}:${finding.vuln_id}`));
+    }
+
+    expect(seen).toHaveLength(200);
+    expect(new Set(seen).size).toBe(200);
+  });
 });
