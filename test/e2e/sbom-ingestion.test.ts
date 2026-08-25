@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { backfillSbom } from "../../src/backfill";
-import { SubrequestBudget } from "../../src/budget";
+import { RunDeadline, SubrequestBudget } from "../../src/budget";
 import { TenantIdSchema } from "../../src/domain";
 import { ingestSbom, ingestSboms } from "../../src/repository";
 import { parsePredicate, sbomInputSchema } from "../../src/sbom";
@@ -9,9 +9,7 @@ import { respond } from "../http";
 
 describe("SBOM ingestion and historical backfill", () => {
   beforeEach(async () => {
-    await env.DB.prepare(
-      "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
-    ).run();
+    await env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)").run();
   });
 
   it("is atomic and idempotent and creates a historical finding", async () => {
@@ -289,5 +287,42 @@ describe("SBOM ingestion and historical backfill", () => {
         "backfill_status",
       ),
     ).resolves.toBe("complete");
+  });
+
+  it("stops resolving advisories once the run deadline passes", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('timeboxed','tenant','image','logical','linux/amd64','digest','pending',0)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (92,'timeboxed','openssl','Wolfi','3.6.3-r3','pkg:apk/wolfi/openssl@3.6.3-r3?distro=wolfi',1)",
+      ),
+    ]);
+    respond({
+      method: "POST",
+      url: "https://osv.test/v1/querybatch",
+      status: 200,
+      body: { results: [{ vulns: [{ id: "CGA-late", modified: "2026-08-01T00:00:00Z" }] }] },
+    });
+
+    // An already-expired deadline stands in for a run that used its wall-clock
+    // allowance: the advisory must stay queued rather than be fetched anyway.
+    await backfillSbom({
+      database: env.DB,
+      sbomId: "timeboxed",
+      osvApiUrl: "https://osv.test",
+      osvBaseUrl: "https://osv.test",
+      now: 1,
+      deadline: new RunDeadline(Date.now(), 0),
+    });
+
+    await expect(
+      env.DB.prepare("SELECT status FROM osv_advisory_jobs WHERE advisory_id='CGA-late'").first(
+        "status",
+      ),
+    ).resolves.toBe("pending");
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM findings").first<number>("count"),
+    ).resolves.toBe(0);
   });
 });

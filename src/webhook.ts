@@ -37,6 +37,13 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
   );
   if (source.installation_id !== String(event.installation.id))
     throw new WebhookError(403, "wrong installation");
+  // The webhook names the repository that published the image, which is also the
+  // repository that must rebuild it, so the dispatch target configures itself.
+  await env.DB.prepare(
+    "UPDATE github_sources SET repository_full_name=? WHERE installation_id=? AND repository_id=?",
+  )
+    .bind(event.repository.full_name, source.installation_id, repositoryId)
+    .run();
   const packageVersionId = String(event.registry_package.package_version.id);
   const digest = metadata.manifest.digest;
   const image = `ghcr.io/${metadata.manifest.uri.toLowerCase()}`;

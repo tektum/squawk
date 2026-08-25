@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { recordActivity } from "./activity";
 import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
-import { SubrequestBudget } from "./budget";
+import { RunDeadline, SubrequestBudget } from "./budget";
 import { dispatchPending } from "./dispatch";
 import { describeError } from "./error-detail";
 import { discoverAdvisories, requeueAdvisoryJobs } from "./sync";
@@ -15,15 +15,23 @@ type ScheduledEnv = Parameters<typeof dispatchPending>[0] &
     readonly OSV_ADVISORY_JOBS: Queue;
   };
 const ingestionRetryDelayMilliseconds = 15 * 60_000;
+/** Leaves headroom under the fifteen-minute limit Cloudflare imposes on cron runs. */
+const runBudgetMilliseconds = 8 * 60_000;
 
 /**
  * Runs the scheduled workflow and records its completion status.
  *
  * @param now - The timestamp associated with the scheduled run
+ * @param deadlineMilliseconds - Wall-clock allowance before remaining work is left for the next run
  */
-export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise<void> {
+export async function runScheduled(
+  env: ScheduledEnv,
+  now = Date.now(),
+  deadlineMilliseconds = runBudgetMilliseconds,
+): Promise<void> {
+  const deadline = new RunDeadline(Date.now(), deadlineMilliseconds);
   try {
-    await executeScheduled(env, now);
+    await executeScheduled(env, now, deadline);
     await recordActivity(env.DB, "cron", "completed", now);
   } catch (error) {
     await recordActivity(env.DB, "cron", "failed", now);
@@ -36,7 +44,11 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
  *
  * @param now - The current timestamp in milliseconds, used for retry eligibility and lease handling.
  */
-async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
+async function executeScheduled(
+  env: ScheduledEnv,
+  now: number,
+  deadline: RunDeadline,
+): Promise<void> {
   // Ingestion and matching get separate allowances: a large ingestion backlog used
   // to consume the whole budget every run, so already-ingested images were never
   // matched against OSV and no findings were produced.
@@ -57,7 +69,7 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
       readonly subject_digest: string;
     }>();
   for (const row of ingestions.results) {
-    if (budget.remaining <= 8) break;
+    if (budget.remaining <= 8 || deadline.expired) break;
     const job: IngestionJob = {
       ...(row.delivery_id ? { deliveryId: row.delivery_id } : {}),
       ...(row.deployment_id ? { deploymentId: row.deployment_id } : {}),
@@ -100,7 +112,7 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
     .bind(now - backfillLeaseMilliseconds)
     .all<{ readonly id: string }>();
   for (const { id } of backfills.results) {
-    if (matchingBudget.remaining <= 3) break;
+    if (matchingBudget.remaining <= 3 || deadline.expired) break;
     try {
       await backfillSbom({
         database: env.DB,
@@ -109,6 +121,7 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
         osvBaseUrl: env.OSV_BASE_URL,
         now,
         budget: matchingBudget,
+        deadline,
       });
     } catch (error) {
       console.error("Scheduled backfill failed", { sbomId: id, error: describeError(error) });
@@ -162,7 +175,7 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
         )
           .bind(ecosystem, new Date(now).toISOString())
           .run();
-    } else if (budget.remaining > 3) {
+    } else if (budget.remaining > 3 && !deadline.expired) {
       try {
         await discoverAdvisories({
           database: env.DB,
@@ -184,7 +197,7 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
   } catch (error) {
     console.error("Scheduled advisory requeue failed", { error: describeError(error) });
   }
-  if (env.DISPATCH_ENABLED === "true" && budget.remaining > 1) {
+  if (env.DISPATCH_ENABLED === "true" && budget.remaining > 1 && !deadline.expired) {
     try {
       await dispatchPending(env, now, budget);
     } catch (error) {

@@ -17,9 +17,20 @@ const dispatchEnv = async () => {
 
 describe("security faults and scheduled SLOs", () => {
   beforeEach(async () => {
-    await env.DB.prepare(
-      "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
-    ).run();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
+      env.DB.prepare(
+        "INSERT INTO github_sources (installation_id,repository_id,org_id,repository_full_name,dispatch_workflow,created_at) VALUES ('123','9','tenant','owner/repo','monitor.yaml',0)",
+      ),
+      // Both fixtures below are ingested images, so each digest has a receipt that
+      // dispatch follows back to the publishing repository.
+      env.DB.prepare(
+        "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at) VALUES ('receipt-b','123','9',?,?,'accepted',0)",
+      ).bind(`sha256:${"b".repeat(64)}`, `sha256:${"b".repeat(64)}`),
+      env.DB.prepare(
+        "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at) VALUES ('receipt-e','123','9',?,?,'accepted',0)",
+      ).bind(`sha256:${"e".repeat(64)}`, `sha256:${"e".repeat(64)}`),
+    ]);
   });
 
   it("retries an accepted-before-D1-crash delivery with its stable identity", async () => {

@@ -59,9 +59,7 @@ describe("D1 migration contract", () => {
         "INSERT INTO components (sbom_id,package_name,ecosystem,version,purl,matchable) VALUES ('missing','x','npm','1','pkg:npm/x@1',1)",
       ).run(),
     ).rejects.toThrow();
-    await env.DB.prepare(
-      "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
-    ).run();
+    await env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)").run();
     await expect(
       env.DB.prepare(
         "INSERT INTO vex_statements (org_id,package_name,ecosystem,vuln_id,status,created_by_descope_user_id,created_at) VALUES ('tenant','x','npm','OSV','invalid','user',0)",
@@ -90,15 +88,17 @@ describe("D1 migration contract", () => {
 
 it("can migrate all tenant-owned rows to the real Descope tenant", async () => {
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO orgs VALUES ('stale','app','owner/repo','monitor.yaml',0)"),
-    env.DB.prepare("INSERT INTO github_sources VALUES ('1','2','stale','registry_package','',0)"),
+    env.DB.prepare("INSERT INTO orgs VALUES ('stale','app',0)"),
+    env.DB.prepare(
+      "INSERT INTO github_sources VALUES ('1','2','stale',0,'owner/repo','monitor.yaml','main')",
+    ),
     env.DB.prepare(
       "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('sbom','stale','image','logical','linux/amd64','digest','complete',0)",
     ),
   ]);
   await env.DB.batch([
     env.DB.prepare(
-      "INSERT OR IGNORE INTO orgs SELECT 'real',descope_inbound_app_id,github_dispatch_repo,github_dispatch_workflow,created_at FROM orgs ORDER BY created_at LIMIT 1",
+      "INSERT OR IGNORE INTO orgs SELECT 'real',descope_inbound_app_id,created_at FROM orgs ORDER BY created_at LIMIT 1",
     ),
     env.DB.prepare("UPDATE github_sources SET org_id='real' WHERE org_id!='real'"),
     env.DB.prepare("UPDATE sboms SET org_id='real' WHERE org_id!='real'"),
@@ -113,9 +113,9 @@ it("can migrate all tenant-owned rows to the real Descope tenant", async () => {
 
 it("detects collisions between non-target tenant SBOM identities", async () => {
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO orgs VALUES ('stale-a','app','owner/repo','monitor.yaml',0)"),
-    env.DB.prepare("INSERT INTO orgs VALUES ('stale-b','app','owner/repo','monitor.yaml',0)"),
-    env.DB.prepare("INSERT INTO orgs VALUES ('real','app','owner/repo','monitor.yaml',0)"),
+    env.DB.prepare("INSERT INTO orgs VALUES ('stale-a','app',0)"),
+    env.DB.prepare("INSERT INTO orgs VALUES ('stale-b','app',0)"),
+    env.DB.prepare("INSERT INTO orgs VALUES ('real','app',0)"),
     env.DB.prepare(
       "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('stale-a-sbom','stale-a','image','logical','linux/amd64','digest-a','complete',0)",
     ),

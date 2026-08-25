@@ -8,9 +8,7 @@ import { respond } from "../http";
 
 describe("durable multi-platform dispatch", () => {
   beforeEach(async () => {
-    await env.DB.prepare(
-      "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
-    ).run();
+    await env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)").run();
     for (const [index, platform] of ["linux/amd64", "linux/arm64"].entries()) {
       const sbom = `sbom-${index}`;
       await env.DB.batch([
@@ -29,9 +27,18 @@ describe("durable multi-platform dispatch", () => {
         env.DB.prepare("INSERT INTO findings VALUES ('tenant',?,'OSV-1',0,NULL)").bind(index + 1),
       ]);
     }
-    await env.DB.prepare(
-      "INSERT INTO vulnerabilities VALUES ('OSV-1','npm','demo','{}','high','summary','2026-01-01T00:00:00Z')",
-    ).run();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO vulnerabilities VALUES ('OSV-1','npm','demo','{}','high','summary','2026-01-01T00:00:00Z')",
+      ),
+      // Dispatch resolves its target through the delivery receipt for the digest.
+      env.DB.prepare(
+        "INSERT INTO github_sources (installation_id,repository_id,org_id,repository_full_name,dispatch_workflow,created_at) VALUES ('123','9','tenant','owner/repo','monitor.yaml',0)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at) VALUES ('receipt','123','9',?,?,'accepted',0)",
+      ).bind(`sha256:${"a".repeat(64)}`, `sha256:${"a".repeat(64)}`),
+    ]);
   });
 
   it("sends one stable delivery and marks both findings", async () => {
@@ -69,6 +76,35 @@ describe("durable multi-platform dispatch", () => {
     expect(await dispatchPending(dispatchEnv, 2000)).toBe(0);
   });
 
+  it("skips findings whose image has no dispatch target instead of calling GitHub", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const pair = await generateKeyPair("RS256", { extractable: true });
+    const privateKey = await exportPKCS8(pair.privateKey);
+    // A source with no configured target, which is what an unseeded install looks like.
+    await env.DB.prepare(
+      "UPDATE github_sources SET repository_full_name=NULL,dispatch_workflow=NULL",
+    ).run();
+
+    await expect(
+      dispatchPending(
+        {
+          DB: env.DB,
+          GH_APP_ID: "42",
+          GH_APP_INSTALLATION_ID: "123",
+          GH_APP_PRIVATE_KEY: privateKey,
+        },
+        1000,
+      ),
+    ).resolves.toBe(0);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM dispatch_deliveries").first<number>("count"),
+    ).resolves.toBe(0);
+    expect(warn).toHaveBeenCalledWith(
+      "Findings without a dispatch target",
+      expect.objectContaining({ findings: 1 }),
+    );
+    warn.mockRestore();
+  });
   it.each([429, 500])("keeps a %s GitHub dispatch retryable", async (status) => {
     const pair = await generateKeyPair("RS256", { extractable: true });
     const privateKey = await exportPKCS8(pair.privateKey);
@@ -183,13 +219,11 @@ describe("durable multi-platform dispatch", () => {
 
 describe("delayed GitHub attestation ingestion", () => {
   beforeEach(async () => {
+    await env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)").run();
     await env.DB.prepare(
-      "INSERT INTO orgs VALUES ('tenant','app','owner/repo','monitor.yaml',0)",
-    ).run();
-    await env.DB.prepare(
-      "INSERT INTO github_sources (installation_id,repository_id,org_id,workflow,ref,created_at) VALUES (?,?,?,?,?,0)",
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,repository_full_name,dispatch_workflow,created_at) VALUES (?,?,?,?,?,0)",
     )
-      .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "registry_package", "")
+      .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "owner/demo", "monitor.yaml")
       .run();
   });
 
