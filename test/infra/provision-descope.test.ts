@@ -126,4 +126,32 @@ describe("Descope management provisioning", () => {
     expect(error).toBeInstanceOf(Error);
     expect(String(error)).not.toContain("management-key");
   });
+
+  it("refuses to provision when the project holds another inbound application", async () => {
+    // Session validation skips the aud claim, which is only sound while this
+    // project has one inbound application.
+    server.use(
+      http.get("https://api.descope.test/v1/mgmt/tenant", () =>
+        HttpResponse.json({ id: "tenant-1", name: desired.tenant.name }),
+      ),
+      http.get("https://api.descope.test/v1/mgmt/thirdparty/apps/load", () =>
+        HttpResponse.json({
+          apps: [
+            { id: "app-1", clientId: "client-1", ...desired.application },
+            {
+              id: "app-2",
+              clientId: "client-2",
+              name: "Another app",
+              description: "someone else",
+              permissionsScopes: [],
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(provisionDescope(desired)).rejects.toThrow(
+      /holds 2 inbound applications; audience validation is required/,
+    );
+  });
 });
