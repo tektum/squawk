@@ -26,7 +26,13 @@ const pendingSchema = z.object({
 });
 const repositorySchema = z.object({ full_name: z.string().regex(/^[^/]+\/[^/]+$/) });
 
-/** Resolves a repository path from its immutable id so no external name is stored. */
+/**
+ * Resolves an immutable GitHub repository ID to its `owner/name` path.
+ *
+ * @param repositoryId - The immutable numeric ID of the GitHub repository
+ * @returns The repository's `owner/name` path
+ * @throws GitHubApiError If the GitHub API request fails
+ */
 async function repositoryPath(
   repositoryId: string,
   token: string,
@@ -46,6 +52,14 @@ async function repositoryPath(
   return repositorySchema.parse(await response.json()).full_name;
 }
 
+/**
+ * Dispatches pending vulnerability findings to their configured GitHub Actions workflows.
+ *
+ * Findings without a complete dispatch target are excluded from dispatch attempts.
+ *
+ * @param now - Timestamp used for delivery and dispatch records
+ * @returns The total number of queried findings, including unroutable findings
+ */
 export async function dispatchPending(
   env: DispatchEnv,
   now = Date.now(),

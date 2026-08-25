@@ -19,10 +19,11 @@ const ingestionRetryDelayMilliseconds = 15 * 60_000;
 const runBudgetMilliseconds = 8 * 60_000;
 
 /**
- * Runs the scheduled workflow and records its completion status.
+ * Runs the scheduled workflow and records whether it completed successfully.
  *
- * @param now - The timestamp associated with the scheduled run
- * @param deadlineMilliseconds - Wall-clock allowance before remaining work is left for the next run
+ * @param env - Environments and configuration required by the scheduled workflow
+ * @param now - Timestamp associated with the scheduled run
+ * @param deadlineMilliseconds - Maximum wall-clock allowance for the run
  */
 export async function runScheduled(
   env: ScheduledEnv,
@@ -40,9 +41,10 @@ export async function runScheduled(
 }
 
 /**
- * Executes scheduled ingestion, SBOM backfill, advisory synchronization, and dispatch work.
+ * Executes scheduled ingestion, backfill, advisory synchronization, and dispatch work within the provided deadline.
  *
  * @param now - The current timestamp in milliseconds, used for retry eligibility and lease handling.
+ * @param deadline - The deadline governing scheduled work.
  */
 async function executeScheduled(
   env: ScheduledEnv,

@@ -27,6 +27,13 @@ type IngestManyResult =
     }
   | { readonly kind: "conflict" };
 
+/**
+ * Determines whether an SBOM already exists for the requested image and platform.
+ *
+ * @param tenantId - The tenant whose SBOM records are searched
+ * @param request - The SBOM ingestion request to match
+ * @returns A retry result with the existing SBOM ID when the predicate matches, a conflict result when it differs, or `null` when no matching SBOM exists
+ */
 async function loadExisting(database: D1Database, tenantId: TenantId, request: IngestRequest) {
   const existing = await database
     .prepare(
@@ -45,6 +52,14 @@ export type IngestSource = {
   readonly repositoryId: string;
 };
 
+/**
+ * Ingests multiple SBOMs and their components for a tenant.
+ *
+ * @param requests - SBOM ingestion requests to process.
+ * @param source - Optional installation and repository metadata to associate with newly ingested SBOMs.
+ * @returns The ingestion outcome, including created or existing SBOM IDs, or a conflict.
+ * @throws Re-throws a database error when ingestion fails without a concurrent insertion accounting for all requests.
+ */
 export async function ingestSboms(
   database: D1Database,
   tenantId: TenantId,
