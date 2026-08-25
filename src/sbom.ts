@@ -120,6 +120,13 @@ function ecosystemFor(
   return { ecosystem: `unknown:${purlType}`, matchable: false };
 }
 
+/**
+ * Parses a package URL into package identity and ecosystem metadata.
+ *
+ * @param purl - The package URL to parse
+ * @returns The decoded package name, ecosystem, matchability, and optional version
+ * @throws `PredicateError` if the package URL is malformed or contains invalid percent encoding
+ */
 export function parsePurl(purl: string): {
   readonly packageName: string;
   readonly ecosystem: string;
@@ -155,11 +162,25 @@ export function parsePurl(purl: string): {
   };
 }
 
+/**
+ * Creates a component from a package URL and fallback version.
+ *
+ * @param purl - The package URL identifying the component
+ * @param version - The version to use when the package URL does not specify one
+ * @returns The component represented by the package URL and resolved version
+ */
 function componentFrom(purl: string, version: string): Component {
   const { version: purlVersion, ...parsed } = parsePurl(purl);
   return { ...parsed, version: purlVersion ?? version, purl };
 }
 
+/**
+ * Parses a CycloneDX or SPDX predicate into package components.
+ *
+ * @param predicate - The predicate containing CycloneDX components or SPDX packages.
+ * @returns The parsed package components.
+ * @throws PredicateError If the predicate contains no package components or duplicate package identities.
+ */
 export function parsePredicate(predicate: unknown): readonly Component[] {
   const cyclonedx = cyclonedxPredicateSchema.safeParse(predicate);
   const components = cyclonedx.success

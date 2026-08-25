@@ -16,6 +16,11 @@ type ScheduledEnv = Parameters<typeof dispatchPending>[0] &
   };
 const ingestionRetryDelayMilliseconds = 15 * 60_000;
 
+/**
+ * Runs the scheduled workflow and records its completion status.
+ *
+ * @param now - The timestamp associated with the scheduled run
+ */
 export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise<void> {
   try {
     await executeScheduled(env, now);
@@ -26,6 +31,11 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
   }
 }
 
+/**
+ * Executes scheduled ingestion, SBOM backfill, advisory synchronization, and dispatch work.
+ *
+ * @param now - The current timestamp in milliseconds, used for retry eligibility and lease handling.
+ */
 async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
   // Ingestion and matching get separate allowances: a large ingestion backlog used
   // to consume the whole budget every run, so already-ingested images were never

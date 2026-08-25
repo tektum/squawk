@@ -16,6 +16,13 @@ export type DiscoveryOptions = {
   readonly maxChunks?: number;
 };
 
+/**
+ * Discovers modified OSV advisories and queues jobs for processing.
+ *
+ * @param options - Configuration for the database, ecosystem, OSV feed, queue, and batch limit
+ * @returns The number of advisories selected for processing
+ * @throws If the OSV modified-advisory feed responds unsuccessfully
+ */
 export async function discoverAdvisories(options: DiscoveryOptions): Promise<number> {
   const rawCursor = await options.database
     .prepare("SELECT last_synced_at,boundary_ids FROM sync_cursors WHERE ecosystem=?")
