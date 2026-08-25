@@ -181,4 +181,31 @@ describe("Descope management provisioning", () => {
       /inbound application app-9 that Squawk does not own/,
     );
   });
+
+  it("reports an unavailable grant endpoint instead of failing the deploy", async () => {
+    // The application and its scopes provision fine; only the grant sub-resource
+    // route is absent, which must not break the whole apply.
+    server.use(
+      http.get("https://api.descope.test/v1/mgmt/tenant", () =>
+        HttpResponse.json({ id: "tenant-1", name: desired.tenant.name }),
+      ),
+      http.get("https://api.descope.test/v1/mgmt/thirdparty/apps/load", () =>
+        HttpResponse.json({
+          apps: [{ id: "app-1", clientId: "client-1", ...desired.application }],
+        }),
+      ),
+      http.get(
+        "https://api.descope.test/v1/mgmt/thirdparty/app/human-grant",
+        () => new HttpResponse(null, { status: 404 }),
+      ),
+      http.post(
+        "https://api.descope.test/v1/mgmt/thirdparty/app/human-grant/create",
+        () => new HttpResponse(null, { status: 404 }),
+      ),
+    );
+
+    await expect(provisionDescope(desired)).resolves.toMatchObject({
+      changes: ["human-grant:unavailable"],
+    });
+  });
 });

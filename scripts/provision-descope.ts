@@ -35,7 +35,8 @@ type Change =
   | "application:create"
   | "application:update"
   | "human-grant:create"
-  | "human-grant:update";
+  | "human-grant:update"
+  | "human-grant:unavailable";
 
 async function request(url: URL, authorization: string, init?: RequestInit): Promise<Response> {
   return fetch(url, {
@@ -61,6 +62,14 @@ async function reconcile(
       method: "POST",
       body: JSON.stringify(value),
     });
+    // A 404 on both load and create means the sub-resource route does not exist
+    // on this API version. The application and its scopes provisioned fine, so
+    // report the gap instead of failing the whole apply.
+    if (response.status === 404) {
+      console.warn(`Descope ${path} endpoint unavailable; configure it manually`);
+      changes.push(`${path}:unavailable` as Change);
+      return;
+    }
     if (!response.ok) throw new Error(`Descope ${path} create failed (${response.status})`);
     changes.push(created);
     return;
