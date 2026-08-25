@@ -15,13 +15,11 @@ const authorizationSchema = z
   .regex(/^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/)
   .transform((value) => value.slice("Bearer ".length));
 const configSchema = z.object({
-  audience: z.string().min(1),
   baseUrl: z.string().url().startsWith("https://").optional(),
   projectId: z.string().min(1),
 });
 
 type AuthConfig = {
-  readonly audience: string;
   readonly baseUrl?: string;
   readonly projectId: string;
 };
@@ -29,10 +27,7 @@ type AuthConfig = {
 type AuthClient = {
   readonly getJwtPermissions: (token: string, tenant?: string) => string[];
   readonly getTenants: (token: string) => string[];
-  readonly validateSession: (
-    token: string,
-    options?: { readonly audience?: string | string[] },
-  ) => Promise<AuthenticationInfo>;
+  readonly validateSession: (token: string) => Promise<AuthenticationInfo>;
 };
 const clients = new Map<string, AuthClient>();
 
@@ -71,13 +66,12 @@ export async function authenticate(
     throw new AuthenticationError("invalid authentication input");
   }
   const sdk = await client({
-    audience: parsed.audience,
     projectId: parsed.projectId,
     ...(parsed.baseUrl ? { baseUrl: parsed.baseUrl } : {}),
   });
   let authInfo: AuthenticationInfo;
   try {
-    authInfo = await sdk.validateSession(token, { audience: parsed.audience });
+    authInfo = await sdk.validateSession(token);
   } catch {
     throw new AuthenticationError("invalid session");
   }

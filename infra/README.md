@@ -56,7 +56,6 @@ No modules.
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_cloudflare_account_id"></a> [cloudflare\_account\_id](#input\_cloudflare\_account\_id) | n/a | `string` | n/a | yes |
-| <a name="input_descope_audience"></a> [descope\_audience](#input\_descope\_audience) | n/a | `string` | `""` | no |
 | <a name="input_descope_project_id"></a> [descope\_project\_id](#input\_descope\_project\_id) | n/a | `string` | `""` | no |
 | <a name="input_descope_tenant_id"></a> [descope\_tenant\_id](#input\_descope\_tenant\_id) | n/a | `string` | `""` | no |
 | <a name="input_dispatch_enabled"></a> [dispatch\_enabled](#input\_dispatch\_enabled) | n/a | `bool` | `true` | no |

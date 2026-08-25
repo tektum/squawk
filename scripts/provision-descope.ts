@@ -117,7 +117,19 @@ export async function provisionDescope(rawInput: ProvisionInput): Promise<{
   const applications = z
     .object({ apps: z.array(applicationSchema) })
     .parse(await applicationsResponse.json()).apps;
-  let application = applications.find((candidate) => candidate.name === input.application.name);
+  // Session validation does not check `aud`, because Descope mints it as the
+  // project id that the project JWKS already binds. That holds only while the
+  // project has exactly one inbound application, so the count — not a mutable
+  // name — carries the invariant, and provisioning fails closed otherwise.
+  if (applications.length > 1)
+    throw new Error(
+      `Descope project holds ${applications.length} inbound applications; audience validation is required before adding another`,
+    );
+  let application = applications[0];
+  if (application && application.name !== input.application.name)
+    throw new Error(
+      `Descope project holds inbound application ${application.id} that Squawk does not own; audience validation is required before sharing a project`,
+    );
   if (!application) {
     const created = await request(
       new URL("/v1/mgmt/thirdparty/app/create", input.baseUrl),
@@ -159,7 +171,6 @@ export async function provisionDescope(rawInput: ProvisionInput): Promise<{
 }
 
 const cliInput = z.object({
-  DESCOPE_AUDIENCE: z.string().url(),
   DESCOPE_MANAGEMENT_KEY: z.string().min(1),
   DESCOPE_PROJECT_ID: z.string().min(1),
   DESCOPE_TENANT_ID: z.string().min(1),
@@ -173,7 +184,7 @@ if (import.meta.main) {
     tenant: { id: environment.DESCOPE_TENANT_ID, name: `Squawk ${environment.DESCOPE_TENANT_ID}` },
     application: {
       name: `Squawk ${environment.DESCOPE_TENANT_ID}`,
-      description: `OAuth client for ${environment.DESCOPE_AUDIENCE}`,
+      description: `OAuth client for Descope project ${environment.DESCOPE_PROJECT_ID}`,
       permissionsScopes: [
         { name: "operations.run", description: "Run scheduled operations" },
         { name: "sbom.manage", description: "Manage stored SBOM data" },

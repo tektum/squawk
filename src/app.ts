@@ -14,7 +14,6 @@ export type WorkerBindings = {
   readonly BUILD_SHA?: string;
   readonly DB: D1Database;
   readonly DISPATCH_ENABLED: string;
-  readonly DESCOPE_AUDIENCE: string;
   readonly DESCOPE_BASE_URL?: string;
   readonly DESCOPE_PROJECT_ID: string;
   readonly GH_APP_ID: string;
@@ -64,7 +63,6 @@ app.post("/webhooks/github", async (context) => {
 app.use("/v1/*", async (context, next) => {
   const principal = await authenticate(context.req.header("Authorization"), {
     projectId: context.env.DESCOPE_PROJECT_ID,
-    audience: context.env.DESCOPE_AUDIENCE,
     ...(context.env.DESCOPE_BASE_URL ? { baseUrl: context.env.DESCOPE_BASE_URL } : {}),
   });
   context.set("principal", principal);

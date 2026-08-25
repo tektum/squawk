@@ -44,7 +44,7 @@ describe("Descope authentication", () => {
       .sign(privateKey);
   }
 
-  const config = { audience, baseUrl, projectId };
+  const config = { baseUrl, projectId };
 
   it("accepts tenant-scoped Descope permissions", async () => {
     const principal = await authenticate(
@@ -75,13 +75,18 @@ describe("Descope authentication", () => {
     expect(principal.capabilities.size).toBe(0);
   });
 
-  it("rejects wrong audience and ambiguous tenant context", async () => {
-    await expect(
-      authenticate(
-        `Bearer ${await token({ tenant: { permissions: [], roles: [] } }, { audience: "wrong" })}`,
-        config,
-      ),
-    ).rejects.toThrow("invalid session");
+  it("accepts any aud claim because the project JWKS already binds the token", async () => {
+    // Descope mints aud as the project id, which the SDK enforces through the
+    // project JWKS and issuer, so no separate audience is configured.
+    const principal = await authenticate(
+      `Bearer ${await token({ tenant: { permissions: ["findings.read"], roles: [] } }, { audience: "someone-else" })}`,
+      config,
+    );
+
+    expect(principal.tenantId).toBe("tenant");
+  });
+
+  it("rejects an ambiguous tenant context", async () => {
     await expect(
       authenticate(
         `Bearer ${await token({ one: { permissions: [], roles: [] }, two: { permissions: [], roles: [] } })}`,
@@ -90,9 +95,9 @@ describe("Descope authentication", () => {
     ).rejects.toThrow("ambiguous tenant context");
   });
 
-  it("rejects empty audience and non-HTTPS Descope endpoints", async () => {
+  it("rejects an empty project id and non-HTTPS Descope endpoints", async () => {
     const session = `Bearer ${await token({ tenant: { permissions: [], roles: [] } })}`;
-    await expect(authenticate(session, { ...config, audience: "" })).rejects.toThrow(
+    await expect(authenticate(session, { ...config, projectId: "" })).rejects.toThrow(
       "invalid authentication input",
     );
     await expect(
