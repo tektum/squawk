@@ -39,6 +39,13 @@ const advisorySchema = z.object({
 });
 const componentSchema = z.object({ id: z.number(), org_id: z.string(), version: z.string() });
 
+/**
+ * Processes a queued advisory job and records its completion or failure.
+ *
+ * @param message - The advisory queue message identifying the job.
+ * @param now - The timestamp used for lease and job updates.
+ * @param osvBaseUrl - The base URL of the OSV advisory service.
+ */
 export async function processAdvisory(options: {
   readonly database: D1Database;
   readonly message: AdvisoryMessage;
@@ -105,6 +112,14 @@ export async function resolveAdvisory(options: {
     await persistAffected(options.database, options.ecosystem, advisory, affected, options.now);
 }
 
+/**
+ * Persists an advisory's affected package data and records matching components.
+ *
+ * @param ecosystem - The package ecosystem associated with the advisory
+ * @param advisory - The advisory metadata to persist
+ * @param affected - The affected package, ranges, and versions to evaluate
+ * @param now - The timestamp for new findings and matching errors
+ */
 async function persistAffected(
   database: D1Database,
   ecosystem: string,

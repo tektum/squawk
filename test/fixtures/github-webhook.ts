@@ -34,6 +34,16 @@ function hex(bytes: ArrayBuffer): string {
   return Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * Creates a GitHub webhook test fixture with configurable failure conditions and mocked registry and vulnerability responses.
+ *
+ * @param failure - The failure scenario to configure.
+ * @param registryStatus - The HTTP status returned by the registry token endpoint.
+ * @param packageVersionId - The expected package version identifier.
+ * @param attestationsVisible - Whether the registry exposes attestations for the image index.
+ * @returns The fixture bindings and signed webhook request factory.
+ * @throws Error if the primary attestation cannot be selected.
+ */
 export async function githubWebhookFixture(
   failure?: FailureCase,
   registryStatus = 200,

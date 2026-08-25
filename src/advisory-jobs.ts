@@ -14,8 +14,13 @@ export function ecosystemFamily(ecosystem: string): string {
 }
 
 /**
- * Durable identity for an advisory revision. Registering is idempotent and only
- * reopens a completed job when OSV published a newer revision.
+ * Registers advisory revisions as idempotent jobs.
+ *
+ * Newer revisions replace older stored revisions and reset their jobs to `pending`;
+ * older or equal revisions preserve the existing job state.
+ *
+ * @param references - Advisory revisions to register
+ * @returns The registered advisories with their effective job IDs and modification timestamps
  */
 export async function registerAdvisoryJobs(
   database: D1Database,

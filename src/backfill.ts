@@ -34,6 +34,11 @@ type BackfillOptions = {
   readonly budget?: SubrequestBudget;
 };
 
+/**
+ * Backfills advisory data for an eligible SBOM and records the scan outcome.
+ *
+ * @param options - Configuration, database access, and identifiers for the backfill operation
+ */
 export async function backfillSbom(options: BackfillOptions): Promise<void> {
   const now = options.now ?? Date.now();
   const claim = await options.database
