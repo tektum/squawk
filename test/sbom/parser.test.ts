@@ -147,6 +147,21 @@ describe("SBOM predicate parser", () => {
     expect(components.map((component) => component.ecosystem)).toEqual(["Debian:12", "Debian"]);
   });
 
+  it("prefers the canonical purl version over a decorated SPDX versionInfo", () => {
+    const [component] = parsePredicate({
+      spdxVersion: "SPDX-2.3",
+      packages: [
+        {
+          name: "stdlib",
+          versionInfo: "go1.26.5",
+          externalRefs: [{ referenceType: "purl", referenceLocator: "pkg:golang/stdlib@1.26.5" }],
+        },
+      ],
+    });
+
+    expect(component).toMatchObject({ ecosystem: "Go", version: "1.26.5", matchable: true });
+  });
+
   it("parses exactly 200 mixed CycloneDX components", () => {
     const ecosystems = ["deb", "npm", "pypi"] as const;
     const components = parsePredicate({

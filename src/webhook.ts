@@ -46,7 +46,12 @@ export async function handleGithubWebhook(request: Request, env: WebhookEnv): Pr
       .all<{ readonly id: string }>();
     for (const { id } of pending.results)
       env.EXECUTION_CONTEXT.waitUntil(
-        backfillSbom({ database: env.DB, sbomId: id, osvApiUrl: env.OSV_API_URL }),
+        backfillSbom({
+          database: env.DB,
+          sbomId: id,
+          osvApiUrl: env.OSV_API_URL,
+          osvBaseUrl: env.OSV_BASE_URL,
+        }),
       );
     return Response.json({ status: existing.status }, { status: 200 });
   }

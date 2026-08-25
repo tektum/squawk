@@ -27,7 +27,11 @@ export async function runScheduled(env: ScheduledEnv, now = Date.now()): Promise
 }
 
 async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
-  const budget = new SubrequestBudget(45);
+  // Ingestion and matching get separate allowances: a large ingestion backlog used
+  // to consume the whole budget every run, so already-ingested images were never
+  // matched against OSV and no findings were produced.
+  const budget = new SubrequestBudget(28);
+  const matchingBudget = new SubrequestBudget(17);
   const ingestions = await env.DB.prepare(
     "SELECT delivery_id,deployment_id,installation_id,repository_id,logical_image_ref,next_descriptor,saw_spdx,subject_digest FROM github_ingestion_jobs WHERE status IN ('pending','failed') AND (attempted_at IS NULL OR attempted_at<=?) ORDER BY CASE WHEN attempted_at IS NULL THEN 0 ELSE 1 END,attempted_at,created_at LIMIT 10",
   )
@@ -86,14 +90,15 @@ async function executeScheduled(env: ScheduledEnv, now: number): Promise<void> {
     .bind(now - backfillLeaseMilliseconds)
     .all<{ readonly id: string }>();
   for (const { id } of backfills.results) {
-    if (budget.remaining <= 3) break;
+    if (matchingBudget.remaining <= 3) break;
     try {
       await backfillSbom({
         database: env.DB,
         sbomId: id,
         osvApiUrl: env.OSV_API_URL,
+        osvBaseUrl: env.OSV_BASE_URL,
         now,
-        budget,
+        budget: matchingBudget,
       });
     } catch (error) {
       console.error("Scheduled backfill failed", { sbomId: id, error: describeError(error) });

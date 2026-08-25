@@ -185,27 +185,24 @@ export async function githubWebhookFixture(
     body:
       failure === "vulnerable"
         ? {
-            results: [
-              {
-                vulns: [
-                  {
-                    id: "GHSA-35jh-r3h4-6jhm",
-                    modified: "2026-01-01T00:00:00Z",
-                    affected: [
-                      {
-                        package: { ecosystem: "npm", name: "lodash" },
-                        ranges: [
-                          { type: "SEMVER", events: [{ introduced: "0" }, { fixed: "4.17.21" }] },
-                        ],
-                        versions: [],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
+            results: [{ vulns: [{ id: "GHSA-35jh-r3h4-6jhm", modified: "2026-01-01T00:00:00Z" }] }],
           }
         : { results: [] },
+  });
+  respond({
+    url: "https://osv.test/npm/GHSA-35jh-r3h4-6jhm.json",
+    status: 200,
+    body: {
+      id: "GHSA-35jh-r3h4-6jhm",
+      modified: "2026-01-01T00:00:00Z",
+      affected: [
+        {
+          package: { ecosystem: "npm", name: "lodash" },
+          ranges: [{ type: "SEMVER", events: [{ introduced: "0" }, { fixed: "4.17.21" }] }],
+          versions: [],
+        },
+      ],
+    },
   });
   return {
     bindings: {

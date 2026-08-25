@@ -55,7 +55,7 @@ async function finishIngestion(env: Pick<WebhookEnv, "DB">, job: IngestionJob, n
 }
 
 export async function ingestPendingImage(
-  env: Pick<WebhookEnv, "DB" | "OSV_API_URL"> & {
+  env: Pick<WebhookEnv, "DB" | "OSV_API_URL" | "OSV_BASE_URL"> & {
     readonly EXECUTION_CONTEXT?: ExecutionContext;
   },
   job: IngestionJob,
@@ -182,6 +182,7 @@ export async function ingestPendingImage(
       database: env.DB,
       sbomId,
       osvApiUrl: env.OSV_API_URL,
+      osvBaseUrl: env.OSV_BASE_URL,
       ...(budget ? { budget } : {}),
     }),
   );

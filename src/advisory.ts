@@ -60,16 +60,13 @@ export async function processAdvisory(options: {
     .first();
   const job = jobSchema.parse(rawJob);
   try {
-    const response = await fetch(
-      `${options.osvBaseUrl}/${encodeURIComponent(job.ecosystem)}/${encodeURIComponent(job.advisory_id)}.json`,
-      { signal: AbortSignal.timeout(10_000) },
-    );
-    if (!response.ok) throw new Error(`OSV advisory failed (${response.status})`);
-    const advisory = advisorySchema.parse(await response.json());
-    for (const affected of advisory.affected.filter(
-      (entry) => entry.package.ecosystem.split(":")[0] === job.ecosystem,
-    ))
-      await persistAffected(options.database, job.ecosystem, advisory, affected, now);
+    await resolveAdvisory({
+      database: options.database,
+      ecosystem: job.ecosystem,
+      advisoryId: job.advisory_id,
+      osvBaseUrl: options.osvBaseUrl,
+      now,
+    });
     await options.database
       .prepare(
         "UPDATE osv_advisory_jobs SET status='complete',error=NULL WHERE job_id=? AND modified_at=?",
@@ -86,6 +83,26 @@ export async function processAdvisory(options: {
       .run();
     throw error;
   }
+}
+
+/** Fetches one advisory revision and records its vulnerabilities and findings. */
+export async function resolveAdvisory(options: {
+  readonly database: D1Database;
+  readonly ecosystem: string;
+  readonly advisoryId: string;
+  readonly osvBaseUrl: string;
+  readonly now: number;
+}): Promise<void> {
+  const response = await fetch(
+    `${options.osvBaseUrl}/${encodeURIComponent(options.ecosystem)}/${encodeURIComponent(options.advisoryId)}.json`,
+    { signal: AbortSignal.timeout(10_000) },
+  );
+  if (!response.ok) throw new Error(`OSV advisory failed (${response.status})`);
+  const advisory = advisorySchema.parse(await response.json());
+  for (const affected of advisory.affected.filter(
+    (entry) => entry.package.ecosystem.split(":")[0] === options.ecosystem,
+  ))
+    await persistAffected(options.database, options.ecosystem, advisory, affected, options.now);
 }
 
 async function persistAffected(

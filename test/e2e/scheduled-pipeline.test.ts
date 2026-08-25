@@ -295,7 +295,9 @@ describe("delayed GitHub attestation ingestion", () => {
       OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
     };
 
-    for (let now = 2_000; now <= 5_000; now += 1_000) await runScheduled(bindings, now);
+    // Cron runs are hours apart, so each pass must clear the ingestion retry delay.
+    for (let pass = 0; pass < 4; pass += 1)
+      await runScheduled(bindings, 2_000 + pass * 4 * 3_600_000);
 
     await expect(
       env.DB.prepare("SELECT COUNT(*) FROM github_ingestion_jobs").first<number>("COUNT(*)"),
@@ -361,6 +363,47 @@ describe("delayed GitHub attestation ingestion", () => {
       }),
     );
     error.mockRestore();
+  });
+
+  it("matches an already-ingested image even when ingestion consumes its budget", async () => {
+    const fixture = await githubWebhookFixture("many-attestations");
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,created_at) VALUES (?,?,?,?, 'pending',0)",
+      ).bind(
+        `sha256:${"b".repeat(64)}`,
+        String(INSTALLATION_ID),
+        String(REPOSITORY_ID),
+        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+      ),
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('starved','tenant','image','logical','linux/amd64','digest','pending',0)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (77,'starved','demo','npm','1.5.0','pkg:npm/demo@1.5.0',1)",
+      ),
+      env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 2000)"),
+    ]);
+
+    await runScheduled(
+      {
+        ...env,
+        ...fixture.bindings,
+        GH_APP_ID: "",
+        GH_APP_INSTALLATION_ID: "",
+        GH_APP_PRIVATE_KEY: "",
+        OSV_API_URL: "https://api.osv.test",
+        OSV_BASE_URL: "https://osv.test",
+        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+      },
+      2_000,
+    );
+
+    await expect(
+      env.DB.prepare("SELECT backfill_status FROM sboms WHERE id='starved'").first(
+        "backfill_status",
+      ),
+    ).resolves.toBe("complete");
   });
 
   it("processes never-attempted jobs before retrying pending peers", async () => {

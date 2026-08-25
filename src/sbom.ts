@@ -124,30 +124,37 @@ export function parsePurl(purl: string): {
   readonly packageName: string;
   readonly ecosystem: string;
   readonly matchable: boolean;
+  readonly version: string | undefined;
 } {
-  const match = /^pkg:([^/]+)\/(.+)@/.exec(purl);
+  const match = /^pkg:([^/?#]+)\/([^?#]+)/.exec(purl);
   if (!match) throw new PredicateError("unparsable purl");
-  const [, purlType, packagePath] = match;
-  const segments = packagePath?.split("/");
-  const rawPackageName = segments?.at(-1);
-  if (!purlType || !segments || !rawPackageName)
-    throw new PredicateError("purl missing package type or name");
+  const [, purlType, pathWithVersion] = match;
+  const separator = pathWithVersion?.lastIndexOf("@") ?? -1;
+  if (!purlType || !pathWithVersion || separator <= 0) throw new PredicateError("unparsable purl");
+  const segments = pathWithVersion.slice(0, separator).split("/");
+  const rawPackageName = segments.at(-1);
+  if (!rawPackageName) throw new PredicateError("purl missing package type or name");
   let packageName: string;
+  let purlVersion: string;
   try {
     packageName = decodeURIComponent(rawPackageName);
+    purlVersion = decodeURIComponent(pathWithVersion.slice(separator + 1));
   } catch {
     throw new PredicateError("purl has invalid percent encoding");
   }
   const qualifiers = new URLSearchParams(purl.split("#")[0]?.split("?")[1] ?? "");
   return {
     packageName,
+    // The purl carries the canonical version OSV ranges against; SPDX versionInfo
+    // may be decorated (Go reports "go1.26.5"), which OSV cannot range-check.
+    version: purlVersion === "" ? undefined : purlVersion,
     ...ecosystemFor(purlType, segments.at(-2), qualifiers.get("distro") ?? undefined),
   };
 }
 
 function componentFrom(purl: string, version: string): Component {
-  const parsed = parsePurl(purl);
-  return { ...parsed, version, purl };
+  const { version: purlVersion, ...parsed } = parsePurl(purl);
+  return { ...parsed, version: purlVersion ?? version, purl };
 }
 
 export function parsePredicate(predicate: unknown): readonly Component[] {
