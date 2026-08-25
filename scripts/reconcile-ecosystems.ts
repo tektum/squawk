@@ -20,6 +20,11 @@ function quote(value: string) {
 /**
  * Builds SQL statements to reconcile stored component metadata and requeue live SBOMs for backfill.
  *
+ * The requeue statement is part of every plan, never conditional on the update count: a previous run
+ * may have restated components and then failed before requeueing, and repeating the reset is
+ * harmless. Findings and vulnerabilities are derived from the restated ecosystem and version, so
+ * they are rebuilt too.
+ *
  * @param components - Stored components whose ecosystem, matchability, and version values should be reconciled
  * @returns The component update statements and unconditional cleanup and SBOM requeue statement
  */
