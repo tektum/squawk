@@ -25,10 +25,6 @@ variable "environment" {
   }
 }
 variable "worker_bundle_path" { type = string }
-variable "descope_audience" {
-  type    = string
-  default = ""
-}
 variable "descope_project_id" {
   type    = string
   default = ""
@@ -52,10 +48,9 @@ variable "dispatch_enabled" {
 
 locals {
   worker_name         = "squawk-${var.environment}"
-  descope_enabled     = var.descope_project_id != "" && var.descope_tenant_id != "" && var.descope_audience != ""
+  descope_enabled     = var.descope_project_id != "" && var.descope_tenant_id != ""
   advisory_queue_name = "${local.worker_name}-osv-advisories"
   advisory_dlq_name   = "${local.worker_name}-osv-advisories-dlq"
-  descope_audience    = var.descope_audience
   worker_modules = concat(
     [{ name = basename(var.worker_bundle_path), content_file = var.worker_bundle_path, content_type = "application/javascript+module" }],
     [for name in fileset(dirname(var.worker_bundle_path), "*.wasm") : {
@@ -67,7 +62,6 @@ locals {
   bindings = concat([
     { name = "DB", type = "d1", database_id = cloudflare_d1_database.squawk.id },
     { name = "DISPATCH_ENABLED", type = "plain_text", text = tostring(var.dispatch_enabled) },
-    { name = "DESCOPE_AUDIENCE", type = "plain_text", text = local.descope_audience },
     { name = "DESCOPE_PROJECT_ID", type = "plain_text", text = var.descope_project_id },
     { name = "OSV_API_URL", type = "plain_text", text = var.osv_api_url },
     { name = "OSV_BASE_URL", type = "plain_text", text = var.osv_base_url },
@@ -97,19 +91,16 @@ resource "terraform_data" "descope" {
   count = local.descope_enabled ? 1 : 0
   triggers_replace = [
     filesha256("../scripts/provision-descope.ts"),
-    var.descope_audience,
     var.descope_project_id,
     var.descope_tenant_id,
   ]
   input = {
-    audience  = var.descope_audience
     project   = var.descope_project_id
     tenant_id = var.descope_tenant_id
   }
   provisioner "local-exec" {
     command = "bun ../scripts/provision-descope.ts"
     environment = {
-      DESCOPE_AUDIENCE   = var.descope_audience
       DESCOPE_PROJECT_ID = var.descope_project_id
       DESCOPE_TENANT_ID  = var.descope_tenant_id
     }

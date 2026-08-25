@@ -159,7 +159,6 @@ export async function provisionDescope(rawInput: ProvisionInput): Promise<{
 }
 
 const cliInput = z.object({
-  DESCOPE_AUDIENCE: z.string().url(),
   DESCOPE_MANAGEMENT_KEY: z.string().min(1),
   DESCOPE_PROJECT_ID: z.string().min(1),
   DESCOPE_TENANT_ID: z.string().min(1),
@@ -173,7 +172,7 @@ if (import.meta.main) {
     tenant: { id: environment.DESCOPE_TENANT_ID, name: `Squawk ${environment.DESCOPE_TENANT_ID}` },
     application: {
       name: `Squawk ${environment.DESCOPE_TENANT_ID}`,
-      description: `OAuth client for ${environment.DESCOPE_AUDIENCE}`,
+      description: `OAuth client for Descope project ${environment.DESCOPE_PROJECT_ID}`,
       permissionsScopes: [
         { name: "operations.run", description: "Run scheduled operations" },
         { name: "sbom.manage", description: "Manage stored SBOM data" },

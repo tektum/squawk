@@ -84,7 +84,6 @@ async function authenticatedBindings(permissions: readonly string[], subject: st
     token: await token.sign(pair.privateKey),
     env: {
       ...env,
-      DESCOPE_AUDIENCE: "audience",
       DESCOPE_BASE_URL: baseUrl,
       DESCOPE_PROJECT_ID: projectId,
       DISPATCH_ENABLED: "false",

@@ -40,14 +40,12 @@ describe("human HTTP pipeline", () => {
     })
       .setProtectedHeader({ alg: "RS256", kid: "key" })
       .setIssuer(projectId)
-      .setAudience("audience")
       .setSubject("user")
       .setIssuedAt()
       .setExpirationTime("5m")
       .sign(pair.privateKey);
     const bindings = {
       ...env,
-      DESCOPE_AUDIENCE: "audience",
       DESCOPE_BASE_URL: baseUrl,
       DESCOPE_PROJECT_ID: projectId,
     };
