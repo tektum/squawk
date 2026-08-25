@@ -147,6 +147,9 @@ export function parsePurl(purl: string): {
   let packageName: string;
   let purlVersion: string;
   try {
+    // Validate the whole purl, not just the fields read below: a malformed
+    // namespace still steers ecosystem resolution.
+    decodeURIComponent(purl);
     packageName = decodeURIComponent(rawPackageName);
     purlVersion = separator < 0 ? "" : decodeURIComponent(pathWithVersion.slice(separator + 1));
   } catch {

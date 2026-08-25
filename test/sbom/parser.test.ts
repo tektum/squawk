@@ -176,6 +176,15 @@ describe("SBOM predicate parser", () => {
     });
   });
 
+  it("rejects invalid percent encoding outside the package name", () => {
+    expect(() =>
+      parsePredicate({
+        bomFormat: "CycloneDX",
+        components: [{ name: "example", version: "1.0.0", purl: "pkg:npm/%ZZ/example@1.0.0" }],
+      }),
+    ).toThrow("invalid SBOM predicate: purl has invalid percent encoding");
+  });
+
   it("parses exactly 200 mixed CycloneDX components", () => {
     const ecosystems = ["deb", "npm", "pypi"] as const;
     const components = parsePredicate({
