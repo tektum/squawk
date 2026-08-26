@@ -1,6 +1,6 @@
 import { Descope, useDescope, useSession } from "@descope/react-sdk/flows";
 import { useCallback, useState } from "react";
-import { useResource } from "./api";
+import { TokenProvider, useResource } from "./api";
 import { type Me, meSchema } from "./schemas";
 import { Findings } from "./views/Findings";
 import { Images } from "./views/Images";
@@ -12,7 +12,7 @@ const tabs = ["overview", "images", "findings", "jobs", "sources"] as const;
 type Tab = (typeof tabs)[number];
 
 export function App() {
-  const { isAuthenticated, isSessionLoading } = useSession();
+  const { isAuthenticated, isSessionLoading, sessionToken } = useSession();
   if (isSessionLoading) return <p className="status">Loading…</p>;
   if (!isAuthenticated)
     return (
@@ -21,7 +21,11 @@ export function App() {
         <Descope flowId="sign-up-or-in" theme="dark" />
       </div>
     );
-  return <Panel />;
+  return (
+    <TokenProvider value={sessionToken ?? ""}>
+      <Panel />
+    </TokenProvider>
+  );
 }
 
 /* `/v1/me` rather than the JWT's own claims: the Worker decides which capabilities it
@@ -31,7 +35,10 @@ function Panel() {
   return <Loaded resource={resource}>{(me) => <Console me={me} />}</Loaded>;
 }
 
-function Console({ me }: { me: Me }) {
+/* Exported as a render seam: the authenticated console can then be mounted with a
+   known principal in a browser harness, which a Descope-issued session cannot be
+   forged to produce. `App` remains the only path that reaches it in production. */
+export function Console({ me }: { me: Me }) {
   const [tab, setTab] = useState<Tab>("overview");
   const { logout } = useDescope();
   const handleLogout = useCallback(() => {

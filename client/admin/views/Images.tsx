@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { send, useResource } from "../api";
+import { useResource, useSend } from "../api";
 import { formatTime, shortRef } from "../format";
 import { type Image, imageDetailSchema, imagesSchema } from "../schemas";
 import { Field, Loaded, Section, Table, Tag, Truncated } from "./parts";
@@ -79,6 +79,7 @@ export function Images({ orgId, canManage }: { orgId: string; canManage: boolean
 
 function Retire({ sbomId, onDone }: { sbomId: string; onDone: () => void }) {
   const [label, setLabel] = useState("Retire");
+  const send = useSend();
   return (
     <button
       type="button"

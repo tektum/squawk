@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { send, useResource } from "../api";
+import { useResource, useSend } from "../api";
 import { formatTime, severityRank, shortRef } from "../format";
 import { type Finding, findingsSchema } from "../schemas";
 import { Loaded, Section, Table, Tag, Truncated } from "./parts";
@@ -77,6 +77,7 @@ export function Findings({ orgId, canAssess }: { orgId: string; canAssess: boole
    rather than behind a dialog: pick a status, optionally justify, save. */
 function Vex({ orgId, finding, onDone }: { orgId: string; finding: Finding; onDone: () => void }) {
   const [status, setStatus] = useState("");
+  const send = useSend();
   const [justification, setJustification] = useState("");
   const [label, setLabel] = useState("Save");
   return (

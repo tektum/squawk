@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { send, useResource } from "../api";
+import { useResource, useSend } from "../api";
 import { countsLine, relativeAge, total } from "../format";
 import { overviewSchema } from "../schemas";
 import { Field, Loaded, Section, Table } from "./parts";
@@ -74,6 +74,7 @@ export function Overview({ orgId, canRun }: { orgId: string; canRun: boolean }) 
 
 function RunScheduled({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState("");
+  const send = useSend();
   return (
     <div className="actions">
       <button

@@ -1,5 +1,4 @@
-import { getSessionToken, isSessionTokenExpired, refresh } from "@descope/react-sdk/flows";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import type * as z from "zod/mini";
 
 export class ApiError extends Error {
@@ -12,20 +11,24 @@ export class ApiError extends Error {
   }
 }
 
-/* Descope keeps the session; the panel only reads it. Refreshing before a call rather
-   than reacting to a 401 keeps a long-lived tab from losing an operator's place. */
-async function authorization(): Promise<string> {
-  if (isSessionTokenExpired()) await refresh();
-  const token = getSessionToken();
-  if (!token) throw new ApiError(401, "Session expired");
-  return `Bearer ${token}`;
-}
+/* The session token comes from `useSession()` through this context rather than from the
+   SDK's standalone `getSessionToken`: that helper is installed by the persistTokens
+   enhancer, so it does not exist when tokens are kept out of browser storage. The
+   provider keeps the current token in one place; AuthProvider refreshes it. */
+const TokenContext = createContext<string>("");
+export const TokenProvider = TokenContext.Provider;
 
-async function call(method: string, path: string, body?: unknown): Promise<Response> {
+async function call(
+  token: string,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<Response> {
+  if (!token) throw new ApiError(401, "Session expired");
   const response = await fetch(path, {
     method,
     headers: {
-      authorization: await authorization(),
+      authorization: `Bearer ${token}`,
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -35,14 +38,19 @@ async function call(method: string, path: string, body?: unknown): Promise<Respo
   throw new ApiError(response.status, detail.error ?? response.statusText);
 }
 
-export async function get<T>(path: string, schema: z.ZodMiniType<T>): Promise<T> {
-  const parsed = schema.safeParse(await (await call("GET", path)).json());
+async function get<T>(token: string, path: string, schema: z.ZodMiniType<T>): Promise<T> {
+  const parsed = schema.safeParse(await (await call(token, "GET", path)).json());
   if (!parsed.success) throw new ApiError(502, "Unexpected response from Squawk");
   return parsed.data;
 }
 
-export async function send(method: string, path: string, body?: unknown): Promise<void> {
-  await call(method, path, body);
+export type Send = (method: string, path: string, body?: unknown) => Promise<void>;
+
+export function useSend(): Send {
+  const token = useContext(TokenContext);
+  return async (method, path, body) => {
+    await call(token, method, path, body);
+  };
 }
 
 export type Resource<T> = {
@@ -52,13 +60,14 @@ export type Resource<T> = {
 };
 
 export function useResource<T>(path: string, schema: z.ZodMiniType<T>, reloadKey = 0): Resource<T> {
+  const token = useContext(TokenContext);
   const [state, setState] = useState<Resource<T>>({ data: null, error: null, loading: true });
   useEffect(() => {
     let live = true;
     const url =
       reloadKey === 0 ? path : `${path}${path.includes("?") ? "&" : "?"}reload=${reloadKey}`;
     setState((current) => ({ ...current, loading: true }));
-    get(url, schema)
+    get(token, url, schema)
       .then((data) => live && setState({ data, error: null, loading: false }))
       .catch(
         (error: unknown) =>
@@ -77,6 +86,6 @@ export function useResource<T>(path: string, schema: z.ZodMiniType<T>, reloadKey
     return () => {
       live = false;
     };
-  }, [path, schema, reloadKey]);
+  }, [token, path, schema, reloadKey]);
   return state;
 }
