@@ -1,7 +1,7 @@
 import { backfillSbom } from "./backfill";
+import type { SubrequestBudget } from "./budget";
 import { sha256 } from "./digest";
 import { TenantIdSchema } from "./domain";
-import type { SubrequestBudget } from "./budget";
 import { statementsForImage } from "./registry-attestation";
 import { ingestSboms } from "./repository";
 import { imageIdentityFromPredicate, parsePredicate, sbomInputSchema } from "./sbom";

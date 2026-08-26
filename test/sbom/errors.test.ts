@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { describeError, safeIssues } from "../../src/error-detail";
-import { parsePredicate, PredicateError } from "../../src/sbom";
+import { PredicateError, parsePredicate } from "../../src/sbom";
 
 const secret = "internal-private-package-name";
 

@@ -1,4 +1,15 @@
 import { z } from "zod";
+import { type Capability, capabilityValues } from "../src/domain";
+import { request } from "./descope-request";
+import { type AuthorizationChange, reconcileAuthorization } from "./provision-authorization";
+
+const capabilityDescriptions: Record<Capability, string> = {
+  "operations.run": "Run scheduled operations",
+  "pipeline.read": "Read pipeline, ingestion, and dispatch state",
+  "sbom.manage": "Manage stored SBOM data",
+  "findings.read": "Read tenant findings",
+  "vex.write": "Write human VEX statements",
+};
 
 const scopeSchema = z.object({
   name: z.string().min(1),
@@ -16,6 +27,7 @@ const inputSchema = z.object({
     description: z.string().optional(),
     permissionsScopes: z.array(scopeSchema),
     humanGrant: z.object({ permissions: z.array(z.string().min(1)).min(1) }),
+    humanRole: z.object({ name: z.string().min(1), description: z.string().min(1) }),
   }),
 });
 const tenantSchema = z.object({ id: z.string(), name: z.string() });
@@ -30,6 +42,7 @@ const resourceSchema = z.object({ value: z.unknown() });
 
 type ProvisionInput = z.input<typeof inputSchema>;
 type Change =
+  | AuthorizationChange
   | "tenant:create"
   | "tenant:update"
   | "application:create"
@@ -37,14 +50,6 @@ type Change =
   | "human-grant:create"
   | "human-grant:update"
   | "human-grant:unavailable";
-
-async function request(url: URL, authorization: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, {
-    ...init,
-    headers: { authorization, "content-type": "application/json", ...init?.headers },
-    signal: AbortSignal.timeout(10_000),
-  });
-}
 
 async function reconcile(
   baseUrl: string,
@@ -171,6 +176,16 @@ export async function provisionDescope(rawInput: ProvisionInput): Promise<{
     "human-grant:create",
     "human-grant:update",
   );
+  changes.push(
+    ...(await reconcileAuthorization(input.baseUrl, authorization, {
+      tenantId: input.tenant.id,
+      role: input.application.humanRole,
+      permissions: input.application.permissionsScopes.map((scope) => ({
+        name: scope.name,
+        description: scope.description,
+      })),
+    })),
+  );
   return {
     tenantId: input.tenant.id,
     inboundAppId: application.id,
@@ -185,23 +200,35 @@ const cliInput = z.object({
   DESCOPE_TENANT_ID: z.string().min(1),
 });
 
+/* Single source of truth for the capability set: `capabilityValues` is what the Worker
+   enforces, so provisioning derives scopes, grant, and tenant role from the same list
+   and a new capability cannot ship without an identity to carry it. */
+export function squawkApplication(
+  tenantId: string,
+  projectId: string,
+): z.input<typeof inputSchema>["application"] {
+  return {
+    name: `Squawk ${tenantId}`,
+    description: `OAuth client for Descope project ${projectId}`,
+    permissionsScopes: capabilityValues.map((capability) => ({
+      name: capability,
+      description: capabilityDescriptions[capability],
+    })),
+    humanGrant: { permissions: [...capabilityValues] },
+    humanRole: {
+      name: "Squawk Operator",
+      description: "Full control over Squawk through the admin panel and API",
+    },
+  };
+}
+
 if (import.meta.main) {
   const environment = cliInput.parse(process.env);
   const result = await provisionDescope({
     projectId: environment.DESCOPE_PROJECT_ID,
     managementKey: environment.DESCOPE_MANAGEMENT_KEY,
     tenant: { id: environment.DESCOPE_TENANT_ID, name: `Squawk ${environment.DESCOPE_TENANT_ID}` },
-    application: {
-      name: `Squawk ${environment.DESCOPE_TENANT_ID}`,
-      description: `OAuth client for Descope project ${environment.DESCOPE_PROJECT_ID}`,
-      permissionsScopes: [
-        { name: "operations.run", description: "Run scheduled operations" },
-        { name: "sbom.manage", description: "Manage stored SBOM data" },
-        { name: "findings.read", description: "Read tenant findings" },
-        { name: "vex.write", description: "Write human VEX statements" },
-      ],
-      humanGrant: { permissions: ["operations.run", "sbom.manage", "findings.read", "vex.write"] },
-    },
+    application: squawkApplication(environment.DESCOPE_TENANT_ID, environment.DESCOPE_PROJECT_ID),
   });
   console.log(JSON.stringify(result));
 }

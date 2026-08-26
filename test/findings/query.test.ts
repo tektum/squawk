@@ -54,13 +54,35 @@ describe("indexed findings query", () => {
 
   it("applies suppression and retirement switches within the p95 target", async () => {
     const tenant = TenantIdSchema.parse("tenant");
-    expect(await listFindings(env.DB, tenant, null, false, false)).toHaveLength(99);
-    expect(await listFindings(env.DB, tenant, null, true, true)).toHaveLength(200);
-    expect(await listFindings(env.DB, tenant, "critical", true, true)).toHaveLength(0);
+    expect(
+      await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: false,
+        includeRetired: false,
+      }),
+    ).toHaveLength(99);
+    expect(
+      await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: true,
+        includeRetired: true,
+      }),
+    ).toHaveLength(200);
+    expect(
+      await listFindings(env.DB, tenant, {
+        severity: "critical",
+        includeSuppressed: true,
+        includeRetired: true,
+      }),
+    ).toHaveLength(0);
     const timings: number[] = [];
     for (let index = 0; index < 30; index += 1) {
       const started = performance.now();
-      await listFindings(env.DB, tenant, null, false, false);
+      await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: false,
+        includeRetired: false,
+      });
       timings.push(performance.now() - started);
     }
     timings.sort((left, right) => left - right);
@@ -73,5 +95,47 @@ describe("indexed findings query", () => {
     expect(plan.results.some(({ detail }) => detail.includes("idx_findings_org_current"))).toBe(
       true,
     );
+  });
+
+  it("pages without dropping or repeating a row when findings share a timestamp", async () => {
+    const tenant = TenantIdSchema.parse("tenant");
+    // Two components of one SBOM carrying the same advisory at the same instant: the
+    // sort ties on both `detected_at` and `vuln_id`, so only a unique tiebreaker can
+    // order them stably across pages.
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (901,'active','shared-a','npm','1.0.0','pkg:npm/shared-a@1.0.0',1)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (902,'active','shared-b','npm','1.0.0','pkg:npm/shared-b@1.0.0',1)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO vulnerabilities VALUES ('OSV-SHARED','npm','shared-a','{}','high','summary','2026-01-01T00:00:00Z')",
+      ),
+      env.DB.prepare(
+        "INSERT INTO vulnerabilities VALUES ('OSV-SHARED','npm','shared-b','{}','high','summary','2026-01-01T00:00:00Z')",
+      ),
+      env.DB.prepare("INSERT INTO findings VALUES ('tenant',901,'OSV-SHARED',0,NULL)"),
+      env.DB.prepare("INSERT INTO findings VALUES ('tenant',902,'OSV-SHARED',0,NULL)"),
+    ]);
+    const seen: string[] = [];
+    for (let offset = 0; offset < 202; offset += 10) {
+      const page = await listFindings(env.DB, tenant, {
+        severity: null,
+        includeSuppressed: true,
+        includeRetired: true,
+        limit: 10,
+        offset,
+      });
+      seen.push(
+        ...page.map((finding) => `${finding.sbom_id}:${finding.vuln_id}:${finding.package_name}`),
+      );
+    }
+
+    expect(seen).toHaveLength(202);
+    expect(new Set(seen).size).toBe(202);
+    expect(
+      seen.filter((row) => row.endsWith(":shared-a") || row.endsWith(":shared-b")),
+    ).toHaveLength(2);
   });
 });

@@ -1,12 +1,12 @@
 import DescopeClient, { type AuthenticationInfo } from "@descope/node-sdk";
-import { sha256 } from "./digest";
 import { z } from "zod";
+import { sha256 } from "./digest";
 import {
-  capabilityValues,
   CapabilitySchema,
+  capabilityValues,
+  type Principal,
   TenantIdSchema,
   UserIdSchema,
-  type Principal,
 } from "./domain";
 
 const claimsSchema = z.object({ sub: z.string().min(1).optional() });
@@ -94,4 +94,10 @@ export function requireCapability(
   capability: z.infer<typeof CapabilitySchema>,
 ): void {
   if (!principal.capabilities.has(capability)) throw new AuthorizationError("missing capability");
+}
+
+export function principalForOrg(principal: Principal, orgId: string): Principal {
+  if (principal.tenantId !== TenantIdSchema.parse(orgId))
+    throw new AuthorizationError("wrong tenant");
+  return principal;
 }

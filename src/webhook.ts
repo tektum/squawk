@@ -1,6 +1,6 @@
 import { backfillSbom } from "./backfill";
-import { enqueueIngestion, ingestPendingImage } from "./webhook-ingestion";
 import { parseWebhook, sourceSchema, type WebhookEnv, WebhookError } from "./webhook-contract";
+import { enqueueIngestion, ingestPendingImage } from "./webhook-ingestion";
 
 export { WebhookError } from "./webhook-contract";
 

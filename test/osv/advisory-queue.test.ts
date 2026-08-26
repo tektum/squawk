@@ -1,7 +1,7 @@
 import { createExecutionContext, createMessageBatch, env, getQueueResult } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import worker from "../../src/index";
 import { sha256 } from "../../src/digest";
+import worker from "../../src/index";
 import { discoverAdvisories, requeueAdvisoryJobs } from "../../src/sync";
 import { respond } from "../http";
 
@@ -137,6 +137,29 @@ describe("OSV advisory queue", () => {
       },
     });
     expect(sent).toEqual([{ jobId: id }]);
+  });
+
+  it("records a redacted failure reason because the panel shows this column", async () => {
+    const id = await jobId();
+    await insertJob(id, "pending", null);
+    respond({
+      url: "https://osv.test/npm/OSV-1.json",
+      status: 200,
+      body: { id: "OSV-1", modified: modifiedAt, affected: "private-package-name" },
+    });
+    const batch = createMessageBatch("squawk-osv-advisories", [queueMessage(id)]);
+    const context = createExecutionContext();
+
+    await worker.queue(batch, { ...env, OSV_BASE_URL: "https://osv.test" } as never, context);
+    await getQueueResult(batch, context);
+
+    const stored = await env.DB.prepare("SELECT status,error FROM osv_advisory_jobs").first<{
+      status: string;
+      error: string;
+    }>();
+    expect(stored?.status).toBe("failed");
+    expect(stored?.error).not.toContain("private-package-name");
+    expect(stored?.error).toContain("ZodError");
   });
 
   async function insertJob(id: string, status: string, attemptedAt: number | null) {

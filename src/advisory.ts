@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { describeError } from "./error-detail";
 import { compareVersion } from "./osv/comparator";
 
 export const advisoryMessageSchema = z.object({ jobId: z.string().regex(/^[a-f0-9]{64}$/) });
@@ -81,7 +82,9 @@ export async function processAdvisory(options: {
       .bind(jobId, job.modified_at)
       .run();
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown advisory error";
+    // The panel surfaces this column to every operator with `pipeline.read`, so it
+    // carries the redacted description rather than a raw upstream message.
+    const message = describeError(error);
     await options.database
       .prepare(
         "UPDATE osv_advisory_jobs SET status='failed',error=? WHERE job_id=? AND modified_at=?",

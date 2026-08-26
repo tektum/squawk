@@ -9,6 +9,7 @@ export type SbomId = z.infer<typeof SbomIdSchema>;
 
 export const capabilityValues = [
   "operations.run",
+  "pipeline.read",
   "sbom.manage",
   "findings.read",
   "vex.write",

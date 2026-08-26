@@ -4,7 +4,7 @@ import { SubrequestBudget } from "../../src/budget";
 import { CapabilitySchema, SbomIdSchema, TenantIdSchema, UserIdSchema } from "../../src/domain";
 import { compareVersion } from "../../src/osv/comparator";
 import { appendVex, listFindings, retireSbom } from "../../src/repository";
-import { parsePredicate, PredicateError, sbomInputSchema } from "../../src/sbom";
+import { PredicateError, parsePredicate, sbomInputSchema } from "../../src/sbom";
 import { discoverAdvisories } from "../../src/sync";
 import { respond } from "../http";
 
@@ -225,7 +225,11 @@ const cases: readonly AcceptanceCase[] = [
         status: "not_affected",
       });
       expect(
-        await listFindings(env.DB, TenantIdSchema.parse("tenant-51"), null, false, false),
+        await listFindings(env.DB, TenantIdSchema.parse("tenant-51"), {
+          severity: null,
+          includeSuppressed: false,
+          includeRetired: false,
+        }),
       ).toHaveLength(0);
     },
   ],
@@ -241,8 +245,13 @@ const cases: readonly AcceptanceCase[] = [
         justification: "verified",
       });
       expect(
-        (await listFindings(env.DB, TenantIdSchema.parse("tenant-52"), null, true, false))[0]
-          ?.vex_justification,
+        (
+          await listFindings(env.DB, TenantIdSchema.parse("tenant-52"), {
+            severity: null,
+            includeSuppressed: true,
+            includeRetired: false,
+          })
+        )[0]?.vex_justification,
       ).toBe("verified");
     },
   ],
@@ -264,7 +273,11 @@ const cases: readonly AcceptanceCase[] = [
     async () => {
       await seedFinding("61", true);
       expect(
-        await listFindings(env.DB, TenantIdSchema.parse("tenant-61"), null, true, false),
+        await listFindings(env.DB, TenantIdSchema.parse("tenant-61"), {
+          severity: null,
+          includeSuppressed: true,
+          includeRetired: false,
+        }),
       ).toHaveLength(0);
     },
   ],
@@ -330,7 +343,11 @@ const cases: readonly AcceptanceCase[] = [
         status: "affected",
       });
       expect(
-        await listFindings(env.DB, TenantIdSchema.parse("tenant-81"), null, false, false),
+        await listFindings(env.DB, TenantIdSchema.parse("tenant-81"), {
+          severity: null,
+          includeSuppressed: false,
+          includeRetired: false,
+        }),
       ).toHaveLength(1);
     },
   ],
@@ -385,7 +402,11 @@ const cases: readonly AcceptanceCase[] = [
         status: "fixed",
       });
       expect(
-        await listFindings(env.DB, TenantIdSchema.parse("tenant-93"), null, false, true),
+        await listFindings(env.DB, TenantIdSchema.parse("tenant-93"), {
+          severity: null,
+          includeSuppressed: false,
+          includeRetired: true,
+        }),
       ).toHaveLength(0);
     },
   ],
