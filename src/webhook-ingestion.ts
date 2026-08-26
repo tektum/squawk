@@ -35,16 +35,11 @@ export async function enqueueIngestion(env: WebhookEnv, job: IngestionJob, now =
     .run();
 }
 /**
- * Records an accepted ingestion delivery and removes the corresponding ingestion job.
- *
- * Also stamps provenance on SBOM rows for this image that were ingested before SBOMs
- * recorded their source, so images published before that column existed become
- * routable once seen again.
+ * Finalizes an ingestion job and applies its source provenance to matching legacy SBOMs.
  *
  * @param job - The ingestion job to finalize
- * @param orgId - The organization resolved for this run, so the stamp and the ingested
- *   SBOMs agree on one owner even if the source is reassigned mid-run
- * @param now - The timestamp to use for delivery creation and completion
+ * @param orgId - The organization associated with the ingestion source
+ * @param now - The timestamp recorded for delivery creation and completion
  */
 async function finishIngestion(
   env: Pick<WebhookEnv, "DB">,
