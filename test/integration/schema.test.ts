@@ -109,6 +109,115 @@ it("can migrate all tenant-owned rows to the real Descope tenant", async () => {
   await expect(env.DB.prepare("SELECT org_id FROM sboms").first("org_id")).resolves.toBe("real");
 });
 
+/** Runs the shipped backfill statement, so the test exercises the migration itself. */
+async function runSourceBackfill(): Promise<void> {
+  const migration = env.TEST_MIGRATIONS.find((candidate) =>
+    candidate.name.startsWith("0010_backfill_sbom_source"),
+  );
+  if (!migration) throw new Error("0010_backfill_sbom_source migration is missing");
+  for (const query of migration.queries) await env.DB.prepare(query).run();
+}
+
+it("adopts SBOM provenance from the delivery receipt for the same digest", async () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
+    env.DB.prepare(
+      "INSERT INTO github_sources VALUES ('install','repo','tenant',0,'monitor.yaml','main')",
+    ),
+    env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('sbom','tenant',?,?,'linux/amd64','digest','complete',0)",
+    ).bind(`ghcr.io/x@${digest}`, `ghcr.io/x@${digest}`),
+    env.DB.prepare(
+      "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at) VALUES ('receipt','install','repo','statement',?,'accepted',0)",
+    ).bind(digest),
+  ]);
+
+  await runSourceBackfill();
+
+  await expect(
+    env.DB.prepare("SELECT installation_id, repository_id FROM sboms WHERE id='sbom'").first(),
+  ).resolves.toEqual({ installation_id: "install", repository_id: "repo" });
+});
+
+it("leaves provenance null when two sources published the same digest", async () => {
+  // Adopting either source would route this image's findings to a repository that
+  // may not have published it, which is the IDOR the source column exists to stop.
+  const digest = `sha256:${"b".repeat(64)}`;
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
+    env.DB.prepare(
+      "INSERT INTO github_sources VALUES ('install','repo','tenant',0,'monitor.yaml','main')",
+    ),
+    env.DB.prepare(
+      "INSERT INTO github_sources VALUES ('rival','other','tenant',0,'monitor.yaml','main')",
+    ),
+    env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('shared','tenant',?,?,'linux/amd64','digest','complete',0)",
+    ).bind(`ghcr.io/x@${digest}`, `ghcr.io/x@${digest}`),
+    env.DB.prepare(
+      "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at) VALUES ('receipt-a','install','repo','statement',?,'accepted',0)",
+    ).bind(digest),
+    env.DB.prepare(
+      "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at) VALUES ('receipt-b','rival','other','statement',?,'accepted',0)",
+    ).bind(digest),
+  ]);
+
+  await runSourceBackfill();
+
+  await expect(
+    env.DB.prepare("SELECT installation_id, repository_id FROM sboms WHERE id='shared'").first(),
+  ).resolves.toEqual({ installation_id: null, repository_id: null });
+});
+
+it("ignores a receipt whose source belongs to another organization", async () => {
+  // A digest seen in another tenant's repository must not become this image's
+  // dispatch target, or that tenant's workflow receives this tenant's findings.
+  const digest = `sha256:${"c".repeat(64)}`;
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
+    env.DB.prepare("INSERT INTO orgs VALUES ('other','app',0)"),
+    env.DB.prepare(
+      "INSERT INTO github_sources VALUES ('rival','other-repo','other',0,'monitor.yaml','main')",
+    ),
+    env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('foreign','tenant',?,?,'linux/amd64','digest','complete',0)",
+    ).bind(`ghcr.io/x@${digest}`, `ghcr.io/x@${digest}`),
+    env.DB.prepare(
+      "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at) VALUES ('receipt-other','rival','other-repo','statement',?,'accepted',0)",
+    ).bind(digest),
+  ]);
+
+  await runSourceBackfill();
+
+  await expect(
+    env.DB.prepare("SELECT installation_id, repository_id FROM sboms WHERE id='foreign'").first(),
+  ).resolves.toEqual({ installation_id: null, repository_id: null });
+});
+
+it("ignores a rejected delivery receipt", async () => {
+  // A rejected delivery proved nothing about who published the digest.
+  const digest = `sha256:${"d".repeat(64)}`;
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
+    env.DB.prepare(
+      "INSERT INTO github_sources VALUES ('install','repo','tenant',0,'monitor.yaml','main')",
+    ),
+    env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('rejected','tenant',?,?,'linux/amd64','digest','complete',0)",
+    ).bind(`ghcr.io/x@${digest}`, `ghcr.io/x@${digest}`),
+    env.DB.prepare(
+      "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at) VALUES ('receipt-rejected','install','repo','statement',?,'rejected',0)",
+    ).bind(digest),
+  ]);
+
+  await runSourceBackfill();
+
+  await expect(
+    env.DB.prepare("SELECT installation_id, repository_id FROM sboms WHERE id='rejected'").first(),
+  ).resolves.toEqual({ installation_id: null, repository_id: null });
+});
+
 it("detects collisions between non-target tenant SBOM identities", async () => {
   await env.DB.batch([
     env.DB.prepare("INSERT INTO orgs VALUES ('stale-a','app',0)"),
