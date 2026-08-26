@@ -201,10 +201,15 @@ async function executeScheduled(
   } catch (error) {
     console.error("Scheduled advisory requeue failed", { error: describeError(error) });
   }
+  // Dispatch records its own outcome: a swallowed failure and a stage skipped for lack
+  // of budget were previously indistinguishable from a run that dispatched nothing
+  // because there was nothing to send.
   if (env.DISPATCH_ENABLED === "true" && budget.remaining > 1 && !deadline.expired) {
     try {
       await dispatchPending(env, now, budget);
+      await recordActivity(env.DB, "dispatch", "completed", now);
     } catch (error) {
+      await recordActivity(env.DB, "dispatch", "failed", now);
       console.error("Scheduled dispatch failed", { error: describeError(error) });
     }
   }

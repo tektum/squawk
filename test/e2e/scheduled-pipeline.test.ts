@@ -194,6 +194,41 @@ describe("durable multi-platform dispatch", () => {
       env.DB.prepare("SELECT COUNT(*) AS count FROM dispatch_deliveries").first<number>("count"),
     ).resolves.toBe(0);
   });
+
+  it("records a failed dispatch stage instead of only logging it", async () => {
+    // A swallowed dispatch failure used to leave a run indistinguishable from one that
+    // had nothing to send: both recorded 'cron'/'completed' and nothing else.
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    respond({
+      method: "POST",
+      url: "https://api.github.com/app/installations/123/access_tokens",
+      status: 401,
+      body: {},
+    });
+
+    await runScheduled(
+      {
+        ...env,
+        GH_APP_ID: "42",
+        GH_APP_INSTALLATION_ID: "123",
+        GH_APP_PRIVATE_KEY: await exportPKCS8(
+          (await generateKeyPair("RS256", { extractable: true })).privateKey,
+        ),
+        OSV_API_URL: "https://api.osv.test",
+        OSV_BASE_URL: "https://osv.test",
+        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+        DISPATCH_ENABLED: "true",
+      },
+      3_000,
+    );
+
+    await expect(
+      env.DB.prepare("SELECT outcome FROM public_activity WHERE kind='dispatch'").first<string>(
+        "outcome",
+      ),
+    ).resolves.toBe("failed");
+    error.mockRestore();
+  });
   it.each([429, 500])("keeps a %s GitHub dispatch retryable", async (status) => {
     const pair = await generateKeyPair("RS256", { extractable: true });
     const privateKey = await exportPKCS8(pair.privateKey);

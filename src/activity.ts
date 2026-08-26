@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { sha256 } from "./digest";
 
-export const activityKindSchema = z.enum(["webhook", "cron", "scan", "advisory"]);
+export const activityKindSchema = z.enum(["webhook", "cron", "scan", "advisory", "dispatch"]);
 export const activityOutcomeSchema = z.enum([
   "accepted",
   "pending",
@@ -84,6 +84,7 @@ const labels: Record<ActivityKind, string> = {
   cron: "Scheduled run",
   scan: "Vulnerability scan",
   advisory: "Advisory processing",
+  dispatch: "Finding dispatch",
 };
 
 function formatTime(timestamp: number): string {
