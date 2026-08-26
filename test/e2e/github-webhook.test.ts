@@ -245,6 +245,45 @@ describe("GitHub registry package webhook", () => {
     ).toBe(0);
   });
 
+  it("stamps provenance on images ingested before SBOMs recorded their source", async () => {
+    // Historical rows carry no source, so their findings can never route. A receipt for
+    // the same image proves the source, but only for the receipt's own organization.
+    const logical = `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`;
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs VALUES ('other','app',0)"),
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('historical','tenant',?,?,'linux/386','digest','complete',0)",
+      ).bind(`ghcr.io/owner/demo@sha256:${"e".repeat(64)}`, logical),
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('foreign','other',?,?,'linux/386','digest','complete',0)",
+      ).bind(`ghcr.io/owner/demo@sha256:${"f".repeat(64)}`, logical),
+    ]);
+
+    const fixture = await githubWebhookFixture();
+    const context = createExecutionContext();
+    const response = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      context,
+    );
+    await waitOnExecutionContext(context);
+
+    expect(response.status, await response.clone().text()).toBe(202);
+    await expect(
+      env.DB.prepare(
+        "SELECT installation_id, repository_id FROM sboms WHERE id='historical'",
+      ).first(),
+    ).resolves.toEqual({
+      installation_id: String(INSTALLATION_ID),
+      repository_id: String(REPOSITORY_ID),
+    });
+    await expect(
+      env.DB.prepare("SELECT installation_id FROM sboms WHERE id='foreign'").first(
+        "installation_id",
+      ),
+    ).resolves.toBeNull();
+  });
+
   it("rejects a declared oversized body before buffering it", async () => {
     const response = await worker.fetch(
       new Request("https://squawk.test/webhooks/github", {

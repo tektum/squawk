@@ -37,6 +37,11 @@ export async function enqueueIngestion(env: WebhookEnv, job: IngestionJob, now =
 /**
  * Records an accepted ingestion delivery and removes the corresponding ingestion job.
  *
+ * Also stamps provenance on SBOM rows for this image that were ingested before SBOMs
+ * recorded their source, so images published before that column existed become
+ * routable once seen again. Scoped to the source's own organization, so a receipt can
+ * never claim another tenant's image.
+ *
  * @param job - The ingestion job to finalize
  * @param now - The timestamp to use for delivery creation and completion
  */
@@ -57,6 +62,16 @@ async function finishIngestion(env: Pick<WebhookEnv, "DB">, job: IngestionJob, n
     env.DB.prepare(
       "DELETE FROM github_ingestion_jobs WHERE installation_id=? AND repository_id=? AND subject_digest=?",
     ).bind(job.installationId, job.repositoryId, job.subjectDigest),
+    env.DB.prepare(
+      `UPDATE sboms SET installation_id=?, repository_id=? WHERE installation_id IS NULL
+       AND logical_image_ref=? AND org_id=(SELECT org_id FROM github_sources WHERE installation_id=? AND repository_id=?)`,
+    ).bind(
+      job.installationId,
+      job.repositoryId,
+      `${job.image}@${job.subjectDigest}`,
+      job.installationId,
+      job.repositoryId,
+    ),
   ]);
 }
 
