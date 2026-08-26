@@ -278,10 +278,28 @@ describe("GitHub registry package webhook", () => {
       repository_id: String(REPOSITORY_ID),
     });
     await expect(
-      env.DB.prepare("SELECT installation_id FROM sboms WHERE id='foreign'").first(
-        "installation_id",
-      ),
-    ).resolves.toBeNull();
+      env.DB.prepare("SELECT installation_id, repository_id FROM sboms WHERE id='foreign'").first(),
+    ).resolves.toEqual({ installation_id: null, repository_id: null });
+  });
+
+  it("leaves a partially populated provenance row untouched", async () => {
+    // The two columns are independently nullable, so matching on installation_id alone
+    // would overwrite a recorded repository_id with this receipt's own.
+    const logical = `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`;
+    await env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at,repository_id) VALUES ('partial','tenant',?,?,'linux/386','digest','complete',0,'999')",
+    )
+      .bind(`ghcr.io/owner/demo@sha256:${"e".repeat(64)}`, logical)
+      .run();
+
+    const fixture = await githubWebhookFixture();
+    const context = createExecutionContext();
+    await worker.fetch(fixture.request(), { ...env, ...fixture.bindings }, context);
+    await waitOnExecutionContext(context);
+
+    await expect(
+      env.DB.prepare("SELECT installation_id, repository_id FROM sboms WHERE id='partial'").first(),
+    ).resolves.toEqual({ installation_id: null, repository_id: "999" });
   });
 
   it("rejects a declared oversized body before buffering it", async () => {
