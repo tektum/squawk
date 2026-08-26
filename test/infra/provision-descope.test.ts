@@ -1,6 +1,6 @@
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
-import { provisionDescope, squawkApplication } from "../../scripts/provision-descope";
+import { provisionDescope, squawkProvisioning } from "../../scripts/provision-descope";
 import { capabilityValues } from "../../src/domain";
 import { server } from "../server";
 
@@ -18,14 +18,18 @@ const desired = {
       { name: "findings.read", description: "Read findings" },
       { name: "vex.write", description: "Write VEX statements" },
     ],
-    humanRole: { name: "Squawk Operator", description: "Full control over Squawk" },
   },
+  role: { name: "Squawk Operator", description: "Full control over Squawk" },
 };
+
+/* Every field Descope accepts on an inbound application, so a body carrying anything
+   else - the tenant role, or the grant that returned 400 - fails these assertions. */
+const applicationWireFields = ["name", "description", "permissionsScopes"];
 
 const projectPermissions = desired.application.permissionsScopes;
 const tenantRole = {
-  name: desired.application.humanRole.name,
-  description: desired.application.humanRole.description,
+  name: desired.role.name,
+  description: desired.role.description,
   permissionNames: projectPermissions.map((permission) => permission.name),
   tenantId: desired.tenant.id,
 };
@@ -67,13 +71,11 @@ describe("Descope management provisioning", () => {
         HttpResponse.json({ apps: [] }),
       ),
       http.post("https://api.descope.test/v1/mgmt/thirdparty/app/create", async ({ request }) => {
-        expect(await request.json()).toEqual(desired.application);
+        const body = (await request.json()) as Record<string, unknown>;
+        expect(Object.keys(body).sort()).toEqual([...applicationWireFields].sort());
+        expect(body).toEqual(desired.application);
         return HttpResponse.json({ id: "app-1", clientId: "client-1", cleartext: "discarded" });
       }),
-      http.post(
-        "https://api.descope.test/v1/mgmt/thirdparty/app/:path/create",
-        () => new HttpResponse(null, { status: 200 }),
-      ),
       ...authorizationHandlers([], []),
     );
 
@@ -112,14 +114,12 @@ describe("Descope management provisioning", () => {
           ],
         }),
       ),
-      http.post(
-        "https://api.descope.test/v1/mgmt/thirdparty/app/update",
-        () => new HttpResponse(null, { status: 200 }),
-      ),
-      http.post(
-        "https://api.descope.test/v1/mgmt/thirdparty/app/:path/update",
-        () => new HttpResponse(null, { status: 200 }),
-      ),
+      http.post("https://api.descope.test/v1/mgmt/thirdparty/app/update", async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        expect(Object.keys(body).sort()).toEqual(["id", ...applicationWireFields].sort());
+        expect(body).toEqual({ id: "app-1", ...desired.application });
+        return new HttpResponse(null, { status: 200 });
+      }),
       ...authorizationHandlers(
         projectPermissions.map((permission, index) =>
           index === 0 ? { ...permission, description: "Old" } : permission,
@@ -218,10 +218,55 @@ describe("Descope management provisioning", () => {
     ).rejects.toThrow(/must use https/);
   });
 
+  it("keeps Squawk-only state out of the application payload", async () => {
+    // The deploy this guards against failed with `application update failed (400)`
+    // because the payload spread carried fields Descope's contract does not accept.
+    const bodies: Record<string, unknown>[] = [];
+    server.use(
+      http.get("https://api.descope.test/v1/mgmt/tenant", () => HttpResponse.json(desired.tenant)),
+      http.get("https://api.descope.test/v1/mgmt/thirdparty/apps/load", () =>
+        HttpResponse.json({
+          apps: [
+            {
+              id: "app-1",
+              clientId: "client-1",
+              name: desired.application.name,
+              description: "Old",
+              permissionsScopes: [],
+            },
+          ],
+        }),
+      ),
+      http.post("https://api.descope.test/v1/mgmt/thirdparty/app/:action", async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>);
+        return new HttpResponse(null, { status: 200 });
+      }),
+      ...authorizationHandlers(projectPermissions, [tenantRole]),
+    );
+
+    // A caller passing the removed fields must not get them forwarded either.
+    await provisionDescope({
+      ...desired,
+      application: {
+        ...desired.application,
+        humanRole: desired.role,
+        humanGrant: { permissions: ["operations.run"] },
+      },
+    } as Parameters<typeof provisionDescope>[0]);
+
+    expect(bodies).toHaveLength(1);
+    for (const body of bodies) {
+      expect(Object.keys(body)).not.toContain("humanRole");
+      expect(Object.keys(body)).not.toContain("humanGrant");
+      expect(Object.keys(body).sort()).toEqual(["id", ...applicationWireFields].sort());
+    }
+  });
+
   it("grants the tenant role every capability the Worker enforces", () => {
-    const application = squawkApplication("tenant-1", "project");
+    const { application, role } = squawkProvisioning("tenant-1", "project");
 
     expect(application.permissionsScopes.map((scope) => scope.name)).toEqual([...capabilityValues]);
-    expect(application.humanRole.name).toBe("Squawk Operator");
+    expect(Object.keys(application).sort()).toEqual([...applicationWireFields].sort());
+    expect(role.name).toBe("Squawk Operator");
   });
 });

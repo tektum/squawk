@@ -17,6 +17,10 @@ const scopeSchema = z.object({
   values: z.array(z.string()).optional(),
   optional: z.boolean().optional(),
 });
+/* `application` is the Descope inbound-app wire payload and nothing else: it is sent
+   verbatim to app/create and app/update. Squawk-only desired state, such as the tenant
+   role, sits beside it so it cannot reach the API - sending an unknown field there is
+   what returned `application update failed (400)` on the deploy this fixes. */
 const inputSchema = z.object({
   baseUrl: z.string().url().default("https://api.descope.com"),
   projectId: z.string().min(1),
@@ -26,8 +30,8 @@ const inputSchema = z.object({
     name: z.string().min(1),
     description: z.string().optional(),
     permissionsScopes: z.array(scopeSchema),
-    humanRole: z.object({ name: z.string().min(1), description: z.string().min(1) }),
   }),
+  role: z.object({ name: z.string().min(1), description: z.string().min(1) }),
 });
 const tenantSchema = z.object({ id: z.string(), name: z.string() });
 const applicationSchema = z.object({
@@ -100,17 +104,20 @@ export async function provisionDescope(rawInput: ProvisionInput): Promise<{
     throw new Error(
       `Descope project holds inbound application ${application.id} that Squawk does not own; audience validation is required before sharing a project`,
     );
+  /* One payload for both routes, projected through the schema: zod strips unknown keys,
+     so this carries exactly the Descope inbound-app fields and no Squawk-only state. */
+  const applicationPayload = inputSchema.shape.application.parse(input.application);
   if (!application) {
     const created = await request(
       new URL("/v1/mgmt/thirdparty/app/create", input.baseUrl),
       authorization,
-      { method: "POST", body: JSON.stringify(input.application) },
+      { method: "POST", body: JSON.stringify(applicationPayload) },
     );
     if (!created.ok) throw new Error(`Descope application create failed (${created.status})`);
     // The create response also carries the client secret in cleartext, which is
     // deliberately not parsed, logged or returned.
     const result = z.object({ id: z.string(), clientId: z.string() }).parse(await created.json());
-    application = { id: result.id, clientId: result.clientId, ...input.application };
+    application = { id: result.id, clientId: result.clientId, ...applicationPayload };
     changes.push("application:create");
   } else if (
     application.description !== (input.application.description ?? null) ||
@@ -120,7 +127,7 @@ export async function provisionDescope(rawInput: ProvisionInput): Promise<{
     const updated = await request(
       new URL("/v1/mgmt/thirdparty/app/update", input.baseUrl),
       authorization,
-      { method: "POST", body: JSON.stringify({ id: application.id, ...input.application }) },
+      { method: "POST", body: JSON.stringify({ id: application.id, ...applicationPayload }) },
     );
     if (!updated.ok) throw new Error(`Descope application update failed (${updated.status})`);
     changes.push("application:update");
@@ -128,7 +135,7 @@ export async function provisionDescope(rawInput: ProvisionInput): Promise<{
   changes.push(
     ...(await reconcileAuthorization(input.baseUrl, authorization, {
       tenantId: input.tenant.id,
-      role: input.application.humanRole,
+      role: input.role,
       permissions: input.application.permissionsScopes.map((scope) => ({
         name: scope.name,
         description: scope.description,
@@ -152,18 +159,20 @@ const cliInput = z.object({
 /* Single source of truth for the capability set: `capabilityValues` is what the Worker
    enforces, so provisioning derives scopes and the tenant role from the same list
    and a new capability cannot ship without an identity to carry it. */
-export function squawkApplication(
+export function squawkProvisioning(
   tenantId: string,
   projectId: string,
-): z.input<typeof inputSchema>["application"] {
+): Pick<z.input<typeof inputSchema>, "application" | "role"> {
   return {
-    name: `Squawk ${tenantId}`,
-    description: `OAuth client for Descope project ${projectId}`,
-    permissionsScopes: capabilityValues.map((capability) => ({
-      name: capability,
-      description: capabilityDescriptions[capability],
-    })),
-    humanRole: {
+    application: {
+      name: `Squawk ${tenantId}`,
+      description: `OAuth client for Descope project ${projectId}`,
+      permissionsScopes: capabilityValues.map((capability) => ({
+        name: capability,
+        description: capabilityDescriptions[capability],
+      })),
+    },
+    role: {
       name: "Squawk Operator",
       description: "Full control over Squawk through the admin panel and API",
     },
@@ -176,7 +185,7 @@ if (import.meta.main) {
     projectId: environment.DESCOPE_PROJECT_ID,
     managementKey: environment.DESCOPE_MANAGEMENT_KEY,
     tenant: { id: environment.DESCOPE_TENANT_ID, name: `Squawk ${environment.DESCOPE_TENANT_ID}` },
-    application: squawkApplication(environment.DESCOPE_TENANT_ID, environment.DESCOPE_PROJECT_ID),
+    ...squawkProvisioning(environment.DESCOPE_TENANT_ID, environment.DESCOPE_PROJECT_ID),
   });
   console.log(JSON.stringify(result));
 }
