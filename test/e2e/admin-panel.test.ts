@@ -74,6 +74,35 @@ describe("admin panel", () => {
     expect(second.status).toBe(304);
   });
 
+  it("refuses plaintext for token-bearing routes and redirects the shell", async () => {
+    const shell = await worker.fetch(
+      new Request("http://squawk.example/admin"),
+      env,
+      createExecutionContext(),
+    );
+    expect(shell.status).toBe(301);
+    expect(shell.headers.get("location")).toBe("https://squawk.example/admin");
+
+    const api = await worker.fetch(
+      new Request("http://squawk.example/v1/orgs/tenant/overview"),
+      env,
+      createExecutionContext(),
+    );
+    expect(api.status).toBe(403);
+    await expect(api.json()).resolves.toEqual({ error: "https required" });
+  });
+
+  it("leaves local development over plaintext alone", async () => {
+    const response = await worker.fetch(
+      new Request("http://127.0.0.1:8787/admin"),
+      env,
+      createExecutionContext(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("strict-transport-security")).toContain("max-age=31536000");
+  });
+
   it("refuses every read route without a session", async () => {
     for (const path of ["/v1/me", "/v1/orgs/tenant/overview", "/v1/orgs/tenant/jobs"]) {
       const response = await worker.fetch(

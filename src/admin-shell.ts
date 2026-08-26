@@ -48,6 +48,7 @@ export function adminShellResponse(projectId: string, baseUrl: string | undefine
       ].join("; "),
       "content-type": "text/html; charset=utf-8",
       "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=31536000; includeSubDomains",
       "x-content-type-options": "nosniff",
     },
   });

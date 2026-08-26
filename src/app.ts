@@ -16,12 +16,23 @@ import { inventoryResponse } from "./inventory";
 import { appendVex, listFindings, retireSbom } from "./repository";
 import { PredicateError } from "./sbom";
 import { runScheduled } from "./scheduled";
+import { httpsRedirect, insecurePublicRequest } from "./transport";
 import { handleGithubWebhook, WebhookError } from "./webhook";
 import type { WorkerEnv } from "./worker-env";
 
 export type { WorkerBindings } from "./worker-env";
 
 export const app = new Hono<WorkerEnv>();
+
+/* A redirect cannot un-leak a token that already crossed the wire, so authenticated
+   routes refuse plaintext outright while the panel shell is redirected to https. */
+app.use("*", async (context, next) => {
+  const url = new URL(context.req.url);
+  if (!insecurePublicRequest(url)) return next();
+  if (url.pathname.startsWith("/v1/")) return context.json({ error: "https required" }, 403);
+  if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) return httpsRedirect(url);
+  await next();
+});
 
 app.get("/health", (context) => {
   if (context.env.BUILD_SHA) context.header("x-squawk-version", context.env.BUILD_SHA);
