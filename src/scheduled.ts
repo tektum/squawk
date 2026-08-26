@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { recordActivity } from "./activity";
 import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
-import { RunDeadline, SubrequestBudget } from "./budget";
+import { RunDeadline, SubrequestBudget, SubrequestBudgetExhausted } from "./budget";
 import { dispatchPending } from "./dispatch";
 import { describeError } from "./error-detail";
 import { discoverAdvisories, requeueAdvisoryJobs } from "./sync";
@@ -204,11 +204,20 @@ async function executeScheduled(
   // Dispatch records its own outcome: a swallowed failure and a stage skipped for lack
   // of budget were previously indistinguishable from a run that dispatched nothing
   // because there was nothing to send.
-  if (env.DISPATCH_ENABLED === "true" && budget.remaining > 1 && !deadline.expired) {
+  //
+  // The first routable row can cost three subrequests on cold caches - installation
+  // token, repository path, workflow dispatch - so entering with fewer guarantees an
+  // exhaustion throw before anything is sent. Running out mid-run is not a failure
+  // either: work simply remains for the next invocation, which is 'pending'.
+  if (env.DISPATCH_ENABLED === "true" && budget.remaining >= 3 && !deadline.expired) {
     try {
       await dispatchPending(env, now, budget);
       await recordActivity(env.DB, "dispatch", "completed", now);
     } catch (error) {
+      if (error instanceof SubrequestBudgetExhausted) {
+        await recordActivity(env.DB, "dispatch", "pending", now);
+        return;
+      }
       await recordActivity(env.DB, "dispatch", "failed", now);
       console.error("Scheduled dispatch failed", { error: describeError(error) });
     }
