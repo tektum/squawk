@@ -83,9 +83,14 @@ describe("admin panel", () => {
     expect(shell.status).toBe(301);
     expect(shell.headers.get("location")).toBe("https://squawk.example/admin");
 
+    // A valid session token over plaintext must be refused by transport before
+    // authentication runs, so the guard cannot be reached with a leaked credential.
+    const bindings = await authenticated(READS);
     const api = await worker.fetch(
-      new Request("http://squawk.example/v1/orgs/tenant/overview"),
-      env,
+      new Request("http://squawk.example/v1/orgs/tenant/overview", {
+        headers: { authorization: `Bearer ${bindings.token}` },
+      }),
+      bindings.env,
       createExecutionContext(),
     );
     expect(api.status).toBe(403);
