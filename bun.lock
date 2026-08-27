@@ -14,6 +14,7 @@
         "@biomejs/biome": "2.5.11",
         "@cloudflare/vitest-pool-workers": "0.21.3",
         "@descope/react-sdk": "3.2.1",
+        "@octokit/webhooks-methods": "^6.0.0",
         "@types/node": "26.4.0",
         "@types/react": "19.2.18",
         "@types/react-dom": "19.2.5",
@@ -225,6 +226,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.9", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.0.3", "@jridgewell/sourcemap-codec": "^1.4.10" } }, "sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ=="],
 
     "@mswjs/interceptors": ["@mswjs/interceptors@0.41.9", "", { "dependencies": { "@open-draft/deferred-promise": "^2.2.0", "@open-draft/logger": "^0.3.0", "@open-draft/until": "^2.0.0", "is-node-process": "^1.2.0", "outvariant": "^1.4.3", "strict-event-emitter": "^0.5.1" } }, "sha512-VVPPgHyQ6ShqnrmDWuxjmUIsO9gWyOZFmuOfLd9LfBGQJwZfy0gvv9pbHSJuoFNIYC7ZDX9aoFwowjcdSC4E8w=="],
+
+    "@octokit/webhooks-methods": ["@octokit/webhooks-methods@6.0.0", "", {}, "sha512-MFlzzoDJVw/GcbfzVC1RLR36QqkTLUf79vLVO3D+xn7r0QgxnFoLZgtrzxiQErAjFUOdH6fas2KeQJ1yr/qaXQ=="],
 
     "@open-draft/deferred-promise": ["@open-draft/deferred-promise@3.0.0", "", {}, "sha512-XW375UK8/9SqUVNVa6M0yEy8+iTi4QN5VZ7aZuRFQmy76LRwI9wy5F4YIBU6T+eTe2/DNDo8tqu8RHlwLHM6RA=="],
 

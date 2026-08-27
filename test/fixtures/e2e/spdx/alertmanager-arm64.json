@@ -1,0 +1,416 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "created": "2026-08-12T15:22:42Z",
+    "creators": ["Tool: apko (v1.2.31)", "Organization: Chainguard, Inc"],
+    "licenseListVersion": "3.27"
+  },
+  "dataLicense": "CC0-1.0",
+  "documentDescribes": [
+    "SPDXRef-Package-Image-sha256-c6e1844d9e7eb87a73907ce921a84f86a081cd189a388e3ce3dd881ee9b03bf9"
+  ],
+  "documentNamespace": "https://spdx.org/spdxdocs/apko/",
+  "name": "sbom-sha256:d33381f73eb8b625d04b0943b0328b336b713ed5063bcc3edc861fd6391342a2-verity-platform-arm64",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-Image-sha256-c6e1844d9e7eb87a73907ce921a84f86a081cd189a388e3ce3dd881ee9b03bf9",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "c6e1844d9e7eb87a73907ce921a84f86a081cd189a388e3ce3dd881ee9b03bf9"
+        }
+      ],
+      "description": "apko container image",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:oci/verity-alertmanager@sha256:c6e1844d9e7eb87a73907ce921a84f86a081cd189a388e3ce3dd881ee9b03bf9?arch=arm64&mediaType=application%2Fvnd.oci.image.manifest.v1%2Bjson&os=linux",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "name": "sha256:c6e1844d9e7eb87a73907ce921a84f86a081cd189a388e3ce3dd881ee9b03bf9",
+      "primaryPackagePurpose": "CONTAINER",
+      "supplier": "Organization: Wolfi",
+      "versionInfo": "sha256:c6e1844d9e7eb87a73907ce921a84f86a081cd189a388e3ce3dd881ee9b03bf9"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-ImageLayer-sha256-d33381f73eb8b625d04b0943b0328b336b713ed5063bcc3edc861fd6391342a2",
+      "description": "apko operating system layer",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:oci/verity-alertmanager@sha256:d33381f73eb8b625d04b0943b0328b336b713ed5063bcc3edc861fd6391342a2?arch=arm64&mediaType=application%2Fvnd.oci.image.layer.v1.tar%2Bgzip&os=linux",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "name": "sha256:d33381f73eb8b625d04b0943b0328b336b713ed5063bcc3edc861fd6391342a2",
+      "primaryPackagePurpose": "CONTAINER",
+      "supplier": "Organization: Wolfi",
+      "versionInfo": "20230201"
+    },
+    {
+      "SPDXID": "SPDXRef-OperatingSystem-wolfi",
+      "description": "Operating System",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "name": "wolfi",
+      "primaryPackagePurpose": "OPERATING_SYSTEM",
+      "supplier": "Organization: Wolfi",
+      "versionInfo": "20230201"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-apk-wolfi-baselayout-20230201-r29",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:apk/wolfi/wolfi-baselayout@20230201-r29?arch=aarch64&distro=wolfi",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "wolfi-baselayout",
+      "originator": "Organization: Wolfi",
+      "primaryPackagePurpose": "APPLICATION",
+      "supplier": "Organization: Wolfi",
+      "versionInfo": "20230201-r29"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Melange-wolfi-baselayout.yaml-35e7b4713442869116936fae3fe8cf7c69bc9054",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/chainguard-dev/stereo@35e7b4713442869116936fae3fe8cf7c69bc9054#wolfi-baselayout.yaml",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "name": "wolfi-baselayout.yaml",
+      "originator": "Organization: Wolfi",
+      "primaryPackagePurpose": "INSTALL",
+      "supplier": "Organization: Wolfi",
+      "versionInfo": "35e7b4713442869116936fae3fe8cf7c69bc9054"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-apk-wolfi-baselayout-64d02eed92ca55e3",
+      "copyrightText": "NOASSERTION",
+      "description": "baselayout data for Wolfi",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:wolfi-baselayout:wolfi-baselayout:20230201-r29:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:wolfi-baselayout:wolfi_baselayout:20230201-r29:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:wolfi_baselayout:wolfi-baselayout:20230201-r29:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:wolfi_baselayout:wolfi_baselayout:20230201-r29:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:wolfi:wolfi-baselayout:20230201-r29:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "SECURITY",
+          "referenceLocator": "cpe:2.3:a:wolfi:wolfi_baselayout:20230201-r29:*:*:*:*:*:*:*",
+          "referenceType": "cpe23Type"
+        },
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:apk/wolfi/wolfi-baselayout@20230201-r29?arch=aarch64&origin=wolfi-baselayout",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "wolfi-baselayout",
+      "originator": "Organization: Wolfi",
+      "sourceInfo": "acquired package info from APK DB: /.PKGINFO",
+      "supplier": "Organization: chainguard",
+      "versionInfo": "20230201-r29"
+    },
+    {
+      "SPDXID": "SPDXRef-DocumentRoot-Directory-wolfi-baselayout",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "wolfi-baselayout",
+      "originator": "Organization: Wolfi",
+      "primaryPackagePurpose": "FILE",
+      "supplier": "Organization: chainguard",
+      "versionInfo": "20230201-r29"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-apk-ca-certificates-bundle-20260413-r1",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:apk/wolfi/ca-certificates-bundle@20260413-r1?arch=aarch64&distro=wolfi",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MPL-2.0 AND MIT",
+      "name": "ca-certificates-bundle",
+      "originator": "Organization: Wolfi",
+      "primaryPackagePurpose": "APPLICATION",
+      "supplier": "Organization: Wolfi",
+      "versionInfo": "20260413-r1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Melange-ca-certificates.yaml-70f58e72ab3f2139f773ba5c148b573e8d835baa",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/chainguard-dev/stereo@70f58e72ab3f2139f773ba5c148b573e8d835baa#ca-certificates.yaml",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "name": "ca-certificates.yaml",
+      "originator": "Organization: Wolfi",
+      "primaryPackagePurpose": "INSTALL",
+      "supplier": "Organization: Wolfi",
+      "versionInfo": "70f58e72ab3f2139f773ba5c148b573e8d835baa"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Source-gitlab.alpinelinux.org-alpine-ca-certificates-20260413-721ff6606b8c145755691d6cf87088ae7ff3d346-0",
+      "downloadLocation": "https://tarballs.cgr.dev/a/f7f6555663adc30d4e3c43a90ddef6942dabe93d06f7a7201cf29d993222346a-721ff6606b8c145755691d6cf87088ae7ff3d346.tar.gz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:generic/alpine%2Fca-certificates@20260413?vcs_url=git%2Bhttps:%2F%2Fgitlab.alpinelinux.org%2Falpine%2Fca-certificates%40721ff6606b8c145755691d6cf87088ae7ff3d346",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MPL-2.0 AND MIT",
+      "name": "alpine/ca-certificates",
+      "originator": "Organization: Wolfi",
+      "primaryPackagePurpose": "SOURCE",
+      "supplier": "Organization: Wolfi",
+      "versionInfo": "20260413"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-apk-ca-certificates-bundle-6c3da0d3987f3615",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:apk/wolfi/ca-certificates-bundle@20260413-r1?arch=aarch64&origin=ca-certificates",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "(MPL-2.0 AND MIT)",
+      "name": "ca-certificates-bundle",
+      "originator": "Organization: Wolfi",
+      "sourceInfo": "acquired package info from APK DB: /.PKGINFO",
+      "supplier": "Organization: chainguard",
+      "versionInfo": "20260413-r1"
+    },
+    {
+      "SPDXID": "SPDXRef-DocumentRoot-Directory-ca-certificates-bundle",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "ca-certificates-bundle",
+      "originator": "Organization: Wolfi",
+      "primaryPackagePurpose": "FILE",
+      "supplier": "Organization: chainguard",
+      "versionInfo": "20260413-r1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-apk-prometheus-alertmanager-0.33.1-r4",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:apk/unknown/prometheus-alertmanager@0.33.1-r4?arch=aarch64",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "name": "prometheus-alertmanager",
+      "originator": "Organization: Unknown",
+      "primaryPackagePurpose": "APPLICATION",
+      "supplier": "Organization: Unknown",
+      "versionInfo": "0.33.1-r4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Melange-images-alertmanager-melange.yaml-d7077c0f05e06b7ab3e8651056ea5cf2824357a3",
+      "downloadLocation": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/https:/%2Funknown%2Funknown%2Funknown@d7077c0f05e06b7ab3e8651056ea5cf2824357a3#images/alertmanager/melange.yaml",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "images/alertmanager/melange.yaml",
+      "originator": "Organization: Unknown",
+      "primaryPackagePurpose": "INSTALL",
+      "supplier": "Organization: Unknown",
+      "versionInfo": "d7077c0f05e06b7ab3e8651056ea5cf2824357a3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Source-github.com-prometheus-alertmanager-v0.33.1-2c8da51e03f3dbbed24f9711ca2d76aab4eef9c5-0",
+      "downloadLocation": "https://github.com/prometheus/alertmanager/archive/2c8da51e03f3dbbed24f9711ca2d76aab4eef9c5.tar.gz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:github/prometheus/alertmanager@v0.33.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "name": "alertmanager",
+      "originator": "Organization: Prometheus",
+      "primaryPackagePurpose": "SOURCE",
+      "supplier": "Organization: Prometheus",
+      "versionInfo": "v0.33.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Source-prometheus-alertmanager-0.33.1-1",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "1f63344e196e47ba7bfe27276f44c1da77e39fb76493e42b2cf0a50ca8f04321"
+        }
+      ],
+      "downloadLocation": "https://github.com/prometheus/alertmanager/releases/download/v0.33.1/alertmanager-web-ui-0.33.1.tar.gz",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:generic/prometheus-alertmanager@0.33.1?checksum=sha256:1f63344e196e47ba7bfe27276f44c1da77e39fb76493e42b2cf0a50ca8f04321&download_url=https:%2F%2Fgithub.com%2Fprometheus%2Falertmanager%2Freleases%2Fdownload%2Fv0.33.1%2Falertmanager-web-ui-0.33.1.tar.gz",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "prometheus-alertmanager",
+      "originator": "Organization: Unknown",
+      "primaryPackagePurpose": "SOURCE",
+      "supplier": "Organization: Unknown",
+      "versionInfo": "0.33.1"
+    }
+  ],
+  "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Package-ImageLayer-sha256-d33381f73eb8b625d04b0943b0328b336b713ed5063bcc3edc861fd6391342a2",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-Package-Image-sha256-c6e1844d9e7eb87a73907ce921a84f86a081cd189a388e3ce3dd881ee9b03bf9"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-Melange-wolfi-baselayout.yaml-35e7b4713442869116936fae3fe8cf7c69bc9054",
+      "relationshipType": "DESCRIBED_BY",
+      "spdxElementId": "SPDXRef-Package-apk-wolfi-baselayout-20230201-r29"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-apk-wolfi-baselayout-64d02eed92ca55e3",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-DocumentRoot-Directory-wolfi-baselayout"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-DocumentRoot-Directory-wolfi-baselayout",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-Package-apk-wolfi-baselayout-20230201-r29"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-apk-wolfi-baselayout-20230201-r29",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-Package-Image-sha256-c6e1844d9e7eb87a73907ce921a84f86a081cd189a388e3ce3dd881ee9b03bf9"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-Melange-ca-certificates.yaml-70f58e72ab3f2139f773ba5c148b573e8d835baa",
+      "relationshipType": "DESCRIBED_BY",
+      "spdxElementId": "SPDXRef-Package-apk-ca-certificates-bundle-20260413-r1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-Source-gitlab.alpinelinux.org-alpine-ca-certificates-20260413-721ff6606b8c145755691d6cf87088ae7ff3d346-0",
+      "relationshipType": "GENERATED_FROM",
+      "spdxElementId": "SPDXRef-Package-apk-ca-certificates-bundle-20260413-r1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-apk-ca-certificates-bundle-6c3da0d3987f3615",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-DocumentRoot-Directory-ca-certificates-bundle"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-DocumentRoot-Directory-ca-certificates-bundle",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-Package-apk-ca-certificates-bundle-20260413-r1"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-apk-ca-certificates-bundle-20260413-r1",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-Package-Image-sha256-c6e1844d9e7eb87a73907ce921a84f86a081cd189a388e3ce3dd881ee9b03bf9"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-Melange-images-alertmanager-melange.yaml-d7077c0f05e06b7ab3e8651056ea5cf2824357a3",
+      "relationshipType": "DESCRIBED_BY",
+      "spdxElementId": "SPDXRef-Package-apk-prometheus-alertmanager-0.33.1-r4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-Source-github.com-prometheus-alertmanager-v0.33.1-2c8da51e03f3dbbed24f9711ca2d76aab4eef9c5-0",
+      "relationshipType": "GENERATED_FROM",
+      "spdxElementId": "SPDXRef-Package-apk-prometheus-alertmanager-0.33.1-r4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-Source-prometheus-alertmanager-0.33.1-1",
+      "relationshipType": "GENERATED_FROM",
+      "spdxElementId": "SPDXRef-Package-apk-prometheus-alertmanager-0.33.1-r4"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-apk-prometheus-alertmanager-0.33.1-r4",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-Package-Image-sha256-c6e1844d9e7eb87a73907ce921a84f86a081cd189a388e3ce3dd881ee9b03bf9"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}

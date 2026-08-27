@@ -1,13 +1,15 @@
 import { z } from "zod";
 import type { SubrequestBudget } from "./budget";
 import { sha256 } from "./digest";
-import { GitHubApiError, installationToken } from "./github";
+import { defaultGitHubApiUrl, GitHubApiError, installationToken } from "./github";
 
 type DispatchEnv = {
   readonly DB: D1Database;
   readonly GH_APP_ID: string;
   readonly GH_APP_INSTALLATION_ID: string;
   readonly GH_APP_PRIVATE_KEY: string;
+  /** Overridden only so a local end-to-end run can serve a fake GitHub. */
+  readonly GITHUB_API_URL?: string;
 };
 
 const pendingSchema = z.object({
@@ -28,12 +30,13 @@ const repositorySchema = z.object({ full_name: z.string().regex(/^[^/]+\/[^/]+$/
 
 /** Resolves a repository path from its immutable id so no external name is stored. */
 async function repositoryPath(
+  apiUrl: string,
   repositoryId: string,
   token: string,
   budget?: SubrequestBudget,
 ): Promise<string> {
   budget?.take();
-  const response = await fetch(`https://api.github.com/repositories/${repositoryId}`, {
+  const response = await fetch(`${apiUrl}/repositories/${repositoryId}`, {
     headers: {
       authorization: `Bearer ${token}`,
       accept: "application/vnd.github+json",
@@ -51,6 +54,7 @@ export async function dispatchPending(
   now = Date.now(),
   budget?: SubrequestBudget,
 ): Promise<number> {
+  const apiUrl = env.GITHUB_API_URL ?? defaultGitHubApiUrl;
   // Each SBOM records the source that produced it, so a digest published by two
   // repositories cannot route a finding to the wrong one, and the dispatch target
   // never drifts from the repository actually publishing the images.
@@ -96,7 +100,7 @@ export async function dispatchPending(
     }
     let repository = paths.get(repositoryId);
     if (!repository) {
-      repository = await repositoryPath(repositoryId, token, budget);
+      repository = await repositoryPath(apiUrl, repositoryId, token, budget);
       paths.set(repositoryId, repository);
     }
     const platforms = row.platforms.split("\n").map((value) => {
@@ -121,7 +125,7 @@ export async function dispatchPending(
       .run();
     budget?.take();
     const response = await fetch(
-      `https://api.github.com/repos/${repository}/actions/workflows/${row.dispatch_workflow}/dispatches`,
+      `${apiUrl}/repos/${repository}/actions/workflows/${row.dispatch_workflow}/dispatches`,
       {
         method: "POST",
         headers: {

@@ -1,0 +1,51 @@
+{
+  "Wolfi|apk-tools|2.14.10-r13": [],
+  "Wolfi|busybox|1.37.0-r61": [
+    {
+      "id": "CGA-2j2v-fjrw-cqrr",
+      "modified": "2026-08-19T15:30:02.703010Z"
+    },
+    {
+      "id": "CGA-3qcv-c3w8-rph5",
+      "modified": "2026-08-19T15:30:04.325240Z"
+    },
+    {
+      "id": "CGA-cq83-w7fm-m6wj",
+      "modified": "2026-08-19T15:30:15.430270Z"
+    },
+    {
+      "id": "CGA-qjg5-83w4-3p7w",
+      "modified": "2026-08-19T15:30:28.857443Z"
+    }
+  ],
+  "Wolfi|ca-certificates-bundle|20260413-r0": [],
+  "Wolfi|ca-certificates-bundle|20260413-r1": [],
+  "Wolfi|glibc-locale-posix|2.43-r11": [],
+  "Wolfi|glibc|2.43-r11": [],
+  "Wolfi|ld-linux|2.43-r11": [],
+  "Wolfi|libcrypt1|2.43-r11": [],
+  "Wolfi|libcrypto3|3.6.3-r3": [
+    {
+      "id": "CGA-2ppc-wv7h-jh62",
+      "modified": "2026-08-19T15:30:12.543494Z"
+    },
+    {
+      "id": "CGA-8xxm-gc5x-rmjg",
+      "modified": "2026-08-20T20:45:03.141534Z"
+    }
+  ],
+  "Wolfi|libgcc|16.1.0-r4": [],
+  "Wolfi|libssl3|3.6.3-r3": [
+    {
+      "id": "CGA-2ppc-wv7h-jh62",
+      "modified": "2026-08-19T15:30:12.543494Z"
+    },
+    {
+      "id": "CGA-8xxm-gc5x-rmjg",
+      "modified": "2026-08-20T20:45:03.141534Z"
+    }
+  ],
+  "Wolfi|libxcrypt|4.5.2-r3": [],
+  "Wolfi|wolfi-baselayout|20230201-r29": [],
+  "Wolfi|zlib|1.3.2-r3": []
+}

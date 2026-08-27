@@ -38,11 +38,14 @@ async function registryJson(url: URL, token: string, accept: string, budget?: Su
   return response.json();
 }
 
+export const defaultGhcrUrl = "https://ghcr.io";
+
 export async function statementsForImage(
   image: string,
   digest: string,
   budget?: SubrequestBudget,
   startDescriptor = 0,
+  ghcrUrl: string = defaultGhcrUrl,
 ): Promise<{
   readonly complete: boolean;
   readonly nextDescriptor: number;
@@ -50,14 +53,14 @@ export async function statementsForImage(
   readonly statements: readonly z.infer<typeof statementSchema>[];
 }> {
   const imagePath = image.slice("ghcr.io/".length);
-  const tokenUrl = new URL("https://ghcr.io/token");
+  const tokenUrl = new URL(`${ghcrUrl}/token`);
   tokenUrl.searchParams.set("scope", `repository:${imagePath}:pull`);
   tokenUrl.searchParams.set("service", "ghcr.io");
   budget?.take();
   const tokenResponse = await fetch(tokenUrl, { signal: AbortSignal.timeout(10_000) });
   if (!tokenResponse.ok) throw new WebhookError(502, "registry token unavailable");
   const { token } = tokenSchema.parse(await tokenResponse.json());
-  const base = `https://ghcr.io/v2/${imagePath}`;
+  const base = `${ghcrUrl}/v2/${imagePath}`;
   const rawIndex = await registryJson(
     new URL(`${base}/manifests/sha256-${digest.slice("sha256:".length)}`),
     token,

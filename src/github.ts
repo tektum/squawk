@@ -5,7 +5,11 @@ import type { SubrequestBudget } from "./budget";
 export type GitHubAppEnv = {
   readonly GH_APP_ID: string;
   readonly GH_APP_PRIVATE_KEY: string;
+  /** Overridden only so a local end-to-end run can serve a fake GitHub. */
+  readonly GITHUB_API_URL?: string;
 };
+
+export const defaultGitHubApiUrl = "https://api.github.com";
 
 type TokenRequest = {
   readonly installationId: string;
@@ -35,7 +39,7 @@ export async function installationToken(
     .sign(key);
   budget?.take();
   const response = await fetch(
-    `https://api.github.com/app/installations/${request.installationId}/access_tokens`,
+    `${env.GITHUB_API_URL ?? defaultGitHubApiUrl}/app/installations/${request.installationId}/access_tokens`,
     {
       method: "POST",
       headers: {
