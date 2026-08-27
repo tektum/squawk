@@ -35,6 +35,15 @@ describe("public inventory", () => {
       env.DB.prepare(
         "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('tagged','tenant','ghcr.io/owner/tagged:latest','ghcr.io/owner/tagged:latest','linux/amd64','tagged','complete',1)",
       ),
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('malformed','tenant',?,?,'linux/amd64','malformed','complete',1)",
+      ).bind(
+        `ghcr.io/owner/malformed@sha256:${"a".repeat(63)}z`,
+        `ghcr.io/owner/malformed@sha256:${"a".repeat(63)}z`,
+      ),
+      env.DB.prepare(
+        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (3,'malformed','hidden','npm','9.9.9','pkg:npm/hidden@9.9.9',1)",
+      ),
     ]);
   });
 
@@ -53,6 +62,9 @@ describe("public inventory", () => {
     expect(html).toContain("linux/amd64 · linux/arm64");
     expect(html).toContain("demo&lt;script&gt;");
     expect(html).not.toContain("demo<script>");
+    expect(html).not.toContain("malformed");
+    expect(html).not.toContain("<td>hidden</td>");
+    expect(html).not.toContain("9.9.9");
     expect(html).not.toContain("ghcr.io/owner/tagged:latest");
     expect(html).toContain(">1</strong><span>findings");
   });

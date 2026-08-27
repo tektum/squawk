@@ -28,20 +28,24 @@ const latestVex = `latest_vex AS (
   FROM vex_statements
 )`;
 
+const immutableImage = `instr(s.logical_image_ref,'@sha256:')>0
+  AND length(substr(s.logical_image_ref,instr(s.logical_image_ref,'@sha256:')+8))=64
+  AND substr(s.logical_image_ref,instr(s.logical_image_ref,'@sha256:')+8) NOT GLOB '*[^0-9a-f]*'`;
+
 export async function inventoryResponse(request: Request, database: D1Database): Promise<Response> {
   const { q } = querySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
   const like = `%${q}%`;
   const [stats, images, packages] = await Promise.all([
     database
       .prepare(`WITH ${latestVex} SELECT
-      (SELECT COUNT(DISTINCT logical_image_ref) FROM sboms WHERE retired_at IS NULL) AS images,
-      (SELECT COUNT(DISTINCT platform) FROM sboms WHERE retired_at IS NULL) AS platforms,
-      (SELECT COUNT(*) FROM components c JOIN sboms s ON s.id=c.sbom_id WHERE s.retired_at IS NULL) AS components,
-      (SELECT COUNT(DISTINCT package_name || char(0) || ecosystem || char(0) || version) FROM components c JOIN sboms s ON s.id=c.sbom_id WHERE s.retired_at IS NULL AND c.matchable=1) AS packages,
+      (SELECT COUNT(DISTINCT s.logical_image_ref) FROM sboms s WHERE s.retired_at IS NULL AND ${immutableImage}) AS images,
+      (SELECT COUNT(DISTINCT s.platform) FROM sboms s WHERE s.retired_at IS NULL AND ${immutableImage}) AS platforms,
+      (SELECT COUNT(*) FROM components c JOIN sboms s ON s.id=c.sbom_id WHERE s.retired_at IS NULL AND ${immutableImage}) AS components,
+      (SELECT COUNT(DISTINCT c.package_name || char(0) || c.ecosystem || char(0) || c.version) FROM components c JOIN sboms s ON s.id=c.sbom_id WHERE s.retired_at IS NULL AND c.matchable=1 AND ${immutableImage}) AS packages,
       (SELECT COUNT(*) FROM findings f
         JOIN components c ON c.id=f.component_id JOIN sboms s ON s.id=c.sbom_id
         LEFT JOIN latest_vex x ON x.row_number=1 AND x.org_id=f.org_id AND x.package_name=c.package_name AND x.ecosystem=c.ecosystem AND x.vuln_id=f.vuln_id
-        WHERE s.retired_at IS NULL AND f.dispatched_at IS NOT NULL AND COALESCE(x.status,'') NOT IN ('not_affected','fixed')) AS findings`)
+        WHERE s.retired_at IS NULL AND ${immutableImage} AND f.dispatched_at IS NOT NULL AND COALESCE(x.status,'') NOT IN ('not_affected','fixed')) AS findings`)
       .first(),
     database
       .prepare(`WITH ${latestVex}, visible AS (
@@ -56,9 +60,7 @@ export async function inventoryResponse(request: Request, database: D1Database):
       FROM sboms s LEFT JOIN components c ON c.sbom_id=s.id
       LEFT JOIN visible f ON f.component_id=c.id
       WHERE s.retired_at IS NULL AND s.logical_image_ref LIKE ?
-        AND instr(s.logical_image_ref,'@sha256:')>0
-        AND length(substr(s.logical_image_ref,instr(s.logical_image_ref,'@sha256:')+8))=64
-        AND substr(s.logical_image_ref,instr(s.logical_image_ref,'@sha256:')+8) NOT GLOB '*[^0-9a-f]*'
+        AND ${immutableImage}
       GROUP BY s.logical_image_ref ORDER BY MAX(s.created_at) DESC LIMIT 50`)
       .bind(like)
       .all(),
@@ -66,7 +68,7 @@ export async function inventoryResponse(request: Request, database: D1Database):
       .prepare(`SELECT c.package_name,c.ecosystem,c.version,
       COUNT(DISTINCT s.logical_image_ref) AS images
       FROM components c JOIN sboms s ON s.id=c.sbom_id
-      WHERE s.retired_at IS NULL AND c.matchable=1
+      WHERE s.retired_at IS NULL AND c.matchable=1 AND ${immutableImage}
         AND (c.package_name LIKE ? OR c.ecosystem LIKE ? OR c.version LIKE ?)
       GROUP BY c.package_name,c.ecosystem,c.version
       ORDER BY c.ecosystem,c.package_name,c.version LIMIT 100`)
