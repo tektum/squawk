@@ -1,4 +1,4 @@
-import { Descope, useDescope, useSession } from "@descope/react-sdk/flows";
+import { useDescope, useSession } from "@descope/react-sdk/flows";
 import { useCallback, useState } from "react";
 import { TokenProvider, useResource } from "./api";
 import { type Me, meSchema } from "./schemas";

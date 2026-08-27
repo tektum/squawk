@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { activityResponse, recordActivity } from "./activity";
 import { registerAdminRoutes } from "./admin-api";
-import { registerPublicRoutes } from "./public-api";
 import { adminClientResponse, adminShellResponse } from "./admin-shell";
 import {
   AuthenticationError,
@@ -14,6 +13,7 @@ import {
 import { SbomIdSchema, vexInputSchema } from "./domain";
 import { safeIssues } from "./error-detail";
 import { inventoryResponse } from "./inventory";
+import { registerPublicRoutes } from "./public-api";
 import { appendVex, listFindings, retireSbom } from "./repository";
 import { PredicateError } from "./sbom";
 import { runScheduled } from "./scheduled";
