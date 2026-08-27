@@ -2,7 +2,8 @@ import { env } from "cloudflare:test";
 import { exportPKCS8, generateKeyPair } from "jose";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { backfillSbom } from "../../src/backfill";
-import { dispatchPending } from "../../src/dispatch";
+import { dispatchMessageSchema, dispatchOne, enqueueDispatch } from "../../src/dispatch";
+import { drainQueue, recordingQueue } from "../queue";
 import { respond } from "../http";
 
 const dispatchEnv = async () => {
@@ -12,8 +13,16 @@ const dispatchEnv = async () => {
     GH_APP_ID: "42",
     GH_APP_INSTALLATION_ID: "123",
     GH_APP_PRIVATE_KEY: await exportPKCS8(pair.privateKey),
+    FINDING_DISPATCH: recordingQueue().queue,
   };
 };
+
+/** Claims the pending groups and returns the messages the queue would carry. */
+async function queuedJobs(environment: Awaited<ReturnType<typeof dispatchEnv>>, now: number) {
+  const producer = recordingQueue();
+  await enqueueDispatch({ ...environment, FINDING_DISPATCH: producer.queue }, now);
+  return producer.sent.map((message) => message.body);
+}
 
 describe("security faults and scheduled SLOs", () => {
   beforeEach(async () => {
@@ -67,13 +76,19 @@ describe("security faults and scheduled SLOs", () => {
       url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
       status: 204,
     });
+    const jobs = await queuedJobs(environment, 1_000);
+    expect(jobs).toHaveLength(1);
+    // Mocked only after the claim is written, so the injected failure lands on the
+    // accepted-state write rather than on the enqueue.
     const batch = vi
       .spyOn(env.DB, "batch")
       .mockRejectedValueOnce(new Error("injected D1 accepted-state failure"));
-
-    await expect(dispatchPending(environment, 1_000)).rejects.toThrow(
-      "injected D1 accepted-state failure",
-    );
+    // The queue redelivers rather than dropping the group, and the delivery identity
+    // lives in the message, so the retry cannot mint a second one.
+    await expect(drainQueue("squawk-finding-dispatch", jobs, environment)).resolves.toEqual({
+      acked: 0,
+      retried: 1,
+    });
     batch.mockRestore();
     const deliveryId = await env.DB.prepare(
       "SELECT delivery_id FROM dispatch_deliveries",
@@ -105,7 +120,10 @@ describe("security faults and scheduled SLOs", () => {
       url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
       status: 204,
     });
-    await expect(dispatchPending(environment, 2_000)).resolves.toBe(1);
+    await expect(drainQueue("squawk-finding-dispatch", jobs, environment)).resolves.toEqual({
+      acked: 1,
+      retried: 0,
+    });
     await expect(
       env.DB.prepare(
         "SELECT delivery_id FROM dispatch_deliveries WHERE status='accepted'",
@@ -175,7 +193,10 @@ describe("security faults and scheduled SLOs", () => {
       url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
       status: 204,
     });
-    await expect(dispatchPending(environment, now)).resolves.toBe(1);
+    const [job] = await queuedJobs(environment, now);
+    await expect(dispatchOne(environment, dispatchMessageSchema.parse(job), now)).resolves.toBe(
+      true,
+    );
     const timestamps = await env.DB.prepare(
       "SELECT s.created_at,c.id AS component_id,f.detected_at,f.dispatched_at,v.modified_at FROM sboms s JOIN components c ON c.sbom_id=s.id JOIN findings f ON f.component_id=c.id JOIN vulnerabilities v ON v.id=f.vuln_id AND v.ecosystem=c.ecosystem AND v.package_name=c.package_name WHERE s.id='pending'",
     ).first<{

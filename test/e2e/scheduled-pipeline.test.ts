@@ -2,9 +2,10 @@ import { env } from "cloudflare:test";
 import { exportPKCS8, generateKeyPair } from "jose";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RunDeadline, SubrequestBudget, SubrequestBudgetExhausted } from "../../src/budget";
-import { dispatchPending } from "../../src/dispatch";
+import { RunDeadline, SubrequestBudget } from "../../src/budget";
+import { enqueueDispatch } from "../../src/dispatch";
 import { runDispatchStage, runScheduled } from "../../src/scheduled";
+import { drainQueue, recordingQueue } from "../queue";
 import { githubWebhookFixture, INSTALLATION_ID, REPOSITORY_ID } from "../fixtures/github-webhook";
 import { respond } from "../http";
 import { server } from "../server";
@@ -60,25 +61,48 @@ describe("durable multi-platform dispatch", () => {
       url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
       status: 204,
     });
+    const producer = recordingQueue();
     const dispatchEnv = {
       DB: env.DB,
       GH_APP_ID: "42",
       GH_APP_INSTALLATION_ID: "123",
       GH_APP_PRIVATE_KEY: privateKey,
+      FINDING_DISPATCH: producer.queue,
     };
 
-    expect(await dispatchPending(dispatchEnv, 1000)).toBe(1);
-    expect(
-      await env.DB.prepare(
-        "SELECT COUNT(*) AS count FROM dispatch_deliveries WHERE status='accepted'",
+    // Enqueueing claims the group and touches D1 only.
+    expect(await enqueueDispatch(dispatchEnv, 1000)).toBe(1);
+    expect(producer.sent).toHaveLength(1);
+    await expect(
+      env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM dispatch_deliveries WHERE status='pending'",
       ).first<number>("count"),
-    ).toBe(1);
-    expect(
-      await env.DB.prepare(
+    ).resolves.toBe(1);
+    await expect(
+      env.DB.prepare(
         "SELECT COUNT(*) AS count FROM findings WHERE dispatched_at IS NOT NULL",
       ).first<number>("count"),
-    ).toBe(2);
-    expect(await dispatchPending(dispatchEnv, 2000)).toBe(0);
+    ).resolves.toBe(0);
+
+    // Draining sends it and marks both platform findings.
+    const drained = await drainQueue(
+      "squawk-finding-dispatch",
+      producer.sent.map((message) => message.body),
+      dispatchEnv,
+    );
+    expect(drained).toEqual({ acked: 1, retried: 0 });
+    await expect(
+      env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM dispatch_deliveries WHERE status='accepted'",
+      ).first<number>("count"),
+    ).resolves.toBe(1);
+    await expect(
+      env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM findings WHERE dispatched_at IS NOT NULL",
+      ).first<number>("count"),
+    ).resolves.toBe(2);
+    // The group is dispatched, so a later pass has nothing to enqueue.
+    expect(await enqueueDispatch(dispatchEnv, 2000)).toBe(0);
   });
 
   it("routes a digest published by two sources to each publishing repository", async () => {
@@ -119,14 +143,19 @@ describe("durable multi-platform dispatch", () => {
       ),
     );
 
-    await dispatchPending(
-      {
-        DB: env.DB,
-        GH_APP_ID: "42",
-        GH_APP_INSTALLATION_ID: "123",
-        GH_APP_PRIVATE_KEY: privateKey,
-      },
-      1000,
+    const producer = recordingQueue();
+    const dispatchEnv = {
+      DB: env.DB,
+      GH_APP_ID: "42",
+      GH_APP_INSTALLATION_ID: "123",
+      GH_APP_PRIVATE_KEY: privateKey,
+      FINDING_DISPATCH: producer.queue,
+    };
+    await enqueueDispatch(dispatchEnv, 1000);
+    await drainQueue(
+      "squawk-finding-dispatch",
+      producer.sent.map((message) => message.body),
+      dispatchEnv,
     );
 
     // Each source authenticates with its own installation and receives only its finding.
@@ -143,17 +172,11 @@ describe("durable multi-platform dispatch", () => {
     // A source with no configured target, which is what an unseeded install looks like.
     await env.DB.prepare("UPDATE github_sources SET dispatch_workflow=NULL").run();
 
+    const producer = recordingQueue();
     await expect(
-      dispatchPending(
-        {
-          DB: env.DB,
-          GH_APP_ID: "42",
-          GH_APP_INSTALLATION_ID: "123",
-          GH_APP_PRIVATE_KEY: privateKey,
-        },
-        1000,
-      ),
+      enqueueDispatch({ DB: env.DB, FINDING_DISPATCH: producer.queue }, 1000),
     ).resolves.toBe(0);
+    expect(producer.sent).toEqual([]);
     await expect(
       env.DB.prepare("SELECT COUNT(*) AS count FROM dispatch_deliveries").first<number>("count"),
     ).resolves.toBe(0);
@@ -196,167 +219,85 @@ describe("durable multi-platform dispatch", () => {
     ).resolves.toBe(0);
   });
 
-  it("records a failed dispatch stage instead of only logging it", async () => {
-    // A swallowed dispatch failure used to leave a run indistinguishable from one that
-    // had nothing to send: both recorded 'cron'/'completed' and nothing else.
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    respond({
-      method: "POST",
-      url: "https://api.github.com/app/installations/123/access_tokens",
-      status: 401,
-      body: {},
-    });
-
-    await runScheduled(
-      {
-        ...env,
-        GH_APP_ID: "42",
-        GH_APP_INSTALLATION_ID: "123",
-        GH_APP_PRIVATE_KEY: await exportPKCS8(
-          (await generateKeyPair("RS256", { extractable: true })).privateKey,
-        ),
-        OSV_API_URL: "https://api.osv.test",
-        OSV_BASE_URL: "https://osv.test",
-        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
-        DISPATCH_ENABLED: "true",
-      },
-      3_000,
-    );
-
-    await expect(
-      env.DB.prepare("SELECT outcome FROM public_activity WHERE kind='dispatch'").first<string>(
-        "outcome",
-      ),
-    ).resolves.toBe("failed");
-    error.mockRestore();
-  });
-
-  it("needs three subrequests for the first routable row", async () => {
-    // Token, repository path and the dispatch POST each take one, so a stage entered
-    // with fewer is guaranteed to throw before anything is sent. This is the cost the
-    // scheduled gate reserves.
-    const pair = await generateKeyPair("RS256", { extractable: true });
-    const privateKey = await exportPKCS8(pair.privateKey);
-    respond({
-      method: "POST",
-      url: "https://api.github.com/app/installations/123/access_tokens",
-      status: 201,
-      body: { token: "installation-token" },
-    });
-    respond({
-      url: "https://api.github.com/repositories/9",
-      status: 200,
-      body: { full_name: "owner/repo" },
-    });
-    respond({
-      method: "POST",
-      url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
-      status: 204,
-    });
-    const dispatchEnv = {
+  it("records the enqueue outcome so a run that queued work is distinguishable", async () => {
+    // A dispatch stage that did nothing used to look identical to one that dispatched
+    // everything: both left only 'cron'/'completed'.
+    const producer = recordingQueue();
+    const stageEnv = {
       ...env,
       GH_APP_ID: "42",
       GH_APP_INSTALLATION_ID: "123",
-      GH_APP_PRIVATE_KEY: privateKey,
+      GH_APP_PRIVATE_KEY: await exportPKCS8(
+        (await generateKeyPair("RS256", { extractable: true })).privateKey,
+      ),
+      OSV_API_URL: "https://api.osv.test",
+      OSV_BASE_URL: "https://osv.test",
+      DISPATCH_ENABLED: "true",
+      FINDING_DISPATCH: producer.queue,
     };
 
-    await expect(
-      dispatchPending(dispatchEnv, 1000, new SubrequestBudget(2)),
-    ).rejects.toBeInstanceOf(SubrequestBudgetExhausted);
-    await expect(
-      env.DB.prepare(
-        "SELECT COUNT(*) AS count FROM dispatch_deliveries WHERE status='accepted'",
-      ).first<number>("count"),
-    ).resolves.toBe(0);
-
-    await expect(dispatchPending(dispatchEnv, 2000, new SubrequestBudget(3))).resolves.toBe(1);
-  });
-
-  it("records exhaustion as pending work rather than a failure", async () => {
-    // Running out of subrequests mid-run leaves work for the next invocation, which is
-    // not the same as dispatch failing. Recording it as 'failed' would send an operator
-    // hunting a GitHub error that never happened.
-    const pair = await generateKeyPair("RS256", { extractable: true });
-    const privateKey = await exportPKCS8(pair.privateKey);
-    respond({
-      method: "POST",
-      url: "https://api.github.com/app/installations/123/access_tokens",
-      status: 201,
-      body: { token: "installation-token" },
-    });
-    respond({
-      url: "https://api.github.com/repositories/9",
-      status: 200,
-      body: { full_name: "owner/repo" },
-    });
-    respond({
-      method: "POST",
-      url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
-      status: 204,
-    });
-    const dispatchEnv = {
-      ...env,
-      GH_APP_ID: "42",
-      GH_APP_INSTALLATION_ID: "123",
-      GH_APP_PRIVATE_KEY: privateKey,
-      DISPATCH_ENABLED: "true",
-    } as Parameters<typeof runDispatchStage>[0];
-    // A second advisory on the same image adds a second dispatch group. The first costs
-    // three subrequests (token, repository path, POST); the second then exhausts the
-    // allowance on its own POST, mid-run and after one row has already been sent.
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO vulnerabilities VALUES ('OSV-2','npm','demo','{}','high','second','2026-01-02T00:00:00Z')",
-      ),
-      env.DB.prepare("INSERT INTO findings VALUES ('tenant',1,'OSV-2',0,NULL)"),
-    ]);
-
-    await runDispatchStage(
-      dispatchEnv,
-      1000,
-      new SubrequestBudget(3),
-      new RunDeadline(Date.now(), 60_000),
-    );
-
+    await runDispatchStage(stageEnv, 1_000);
     await expect(
       env.DB.prepare("SELECT outcome FROM public_activity WHERE kind='dispatch'").first<string>(
         "outcome",
       ),
     ).resolves.toBe("pending");
-    // The row it did send stays sent, so the next run resumes rather than repeats it.
+    expect(producer.sent).toHaveLength(1);
+
+    // A delivery marked accepted while its findings stay undispatched is still eligible,
+    // by design: the POST landed but D1 did not, so the group must be re-enqueued. The
+    // terminal state is the finding itself.
+    await env.DB.batch([
+      env.DB.prepare("UPDATE dispatch_deliveries SET status='accepted'"),
+      env.DB.prepare("UPDATE findings SET dispatched_at=1500"),
+    ]);
+    await env.DB.prepare("DELETE FROM public_activity").run();
+    await runDispatchStage(stageEnv, 2_000);
     await expect(
-      env.DB.prepare(
-        "SELECT COUNT(*) AS count FROM findings WHERE dispatched_at IS NOT NULL",
-      ).first<number>("count"),
-    ).resolves.toBeGreaterThan(0);
+      env.DB.prepare("SELECT outcome FROM public_activity WHERE kind='dispatch'").first<string>(
+        "outcome",
+      ),
+    ).resolves.toBe("ignored");
   });
 
-  it("skips dispatch below the first row's cost without recording an outcome", async () => {
-    const pair = await generateKeyPair("RS256", { extractable: true });
-    await runDispatchStage(
-      {
-        ...env,
-        GH_APP_ID: "42",
-        GH_APP_INSTALLATION_ID: "123",
-        GH_APP_PRIVATE_KEY: await exportPKCS8(pair.privateKey),
-        OSV_API_URL: "https://api.osv.test",
-        OSV_BASE_URL: "https://osv.test",
-        DISPATCH_ENABLED: "true",
-      },
-      1000,
-      new SubrequestBudget(2),
-      new RunDeadline(Date.now(), 60_000),
-    );
+  it("holds a lease so a second pass does not dispatch the same group twice", async () => {
+    const producer = recordingQueue();
+    const dispatchEnv = {
+      DB: env.DB,
+      GH_APP_ID: "42",
+      GH_APP_INSTALLATION_ID: "123",
+      GH_APP_PRIVATE_KEY: await exportPKCS8(
+        (await generateKeyPair("RS256", { extractable: true })).privateKey,
+      ),
+      FINDING_DISPATCH: producer.queue,
+    };
 
+    expect(await enqueueDispatch(dispatchEnv, 1_000)).toBe(1);
+    // Queues are at-least-once, so a duplicate enqueue would mean a duplicate CI run.
+    expect(await enqueueDispatch(dispatchEnv, 2_000)).toBe(0);
+    // Once the claim outlives its lease the group is recoverable again.
+    expect(await enqueueDispatch(dispatchEnv, 1_000 + 16 * 60_000)).toBe(1);
+    expect(producer.sent).toHaveLength(2);
+  });
+
+  it("records a dead-letter message instead of letting it accumulate unseen", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const drained = await drainQueue("squawk-finding-dispatch-dlq", [{ deliveryId: "spent" }], env);
+
+    expect(drained).toEqual({ acked: 1, retried: 0 });
     await expect(
       env.DB.prepare(
-        "SELECT COUNT(*) AS count FROM public_activity WHERE kind='dispatch'",
-      ).first<number>("count"),
-    ).resolves.toBe(0);
+        "SELECT outcome FROM public_activity WHERE kind='dispatch' ORDER BY occurred_at DESC",
+      ).first<string>("outcome"),
+    ).resolves.toBe("failed");
+    error.mockRestore();
   });
-  it.each([429, 500])("keeps a %s GitHub dispatch retryable", async (status) => {
+
+  it.each([429, 500])("redelivers a %s GitHub dispatch instead of dropping it", async (status) => {
     const pair = await generateKeyPair("RS256", { extractable: true });
     const privateKey = await exportPKCS8(pair.privateKey);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     respond({
       method: "POST",
       url: "https://api.github.com/app/installations/123/access_tokens",
@@ -373,18 +314,24 @@ describe("durable multi-platform dispatch", () => {
       url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
       status,
     });
+    const producer = recordingQueue();
+    const dispatchEnv = {
+      DB: env.DB,
+      GH_APP_ID: "42",
+      GH_APP_INSTALLATION_ID: "123",
+      GH_APP_PRIVATE_KEY: privateKey,
+      FINDING_DISPATCH: producer.queue,
+    };
 
-    expect(
-      await dispatchPending(
-        {
-          DB: env.DB,
-          GH_APP_ID: "42",
-          GH_APP_INSTALLATION_ID: "123",
-          GH_APP_PRIVATE_KEY: privateKey,
-        },
-        1000,
-      ),
-    ).toBe(1);
+    await enqueueDispatch(dispatchEnv, 1000);
+    const drained = await drainQueue(
+      "squawk-finding-dispatch",
+      producer.sent.map((message) => message.body),
+      dispatchEnv,
+    );
+
+    // The queue owns the backoff, so the message is retried rather than acked away.
+    expect(drained).toEqual({ acked: 0, retried: 1 });
     await expect(
       env.DB.prepare(
         "SELECT COUNT(*) AS count FROM dispatch_deliveries WHERE status='failed'",
@@ -395,6 +342,53 @@ describe("durable multi-platform dispatch", () => {
         "SELECT COUNT(*) AS count FROM findings WHERE dispatched_at IS NULL",
       ).first<number>("count"),
     ).resolves.toBe(2);
+    error.mockRestore();
+  });
+
+  it("acks a permanent GitHub rejection instead of burning retries", async () => {
+    const pair = await generateKeyPair("RS256", { extractable: true });
+    const privateKey = await exportPKCS8(pair.privateKey);
+    respond({
+      method: "POST",
+      url: "https://api.github.com/app/installations/123/access_tokens",
+      status: 201,
+      body: { token: "installation-token" },
+    });
+    respond({
+      url: "https://api.github.com/repositories/9",
+      status: 200,
+      body: { full_name: "owner/repo" },
+    });
+    respond({
+      method: "POST",
+      url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
+      status: 404,
+    });
+    const producer = recordingQueue();
+    const dispatchEnv = {
+      DB: env.DB,
+      GH_APP_ID: "42",
+      GH_APP_INSTALLATION_ID: "123",
+      GH_APP_PRIVATE_KEY: privateKey,
+      FINDING_DISPATCH: producer.queue,
+    };
+
+    await enqueueDispatch(dispatchEnv, 1000);
+    const drained = await drainQueue(
+      "squawk-finding-dispatch",
+      producer.sent.map((message) => message.body),
+      dispatchEnv,
+    );
+
+    expect(drained).toEqual({ acked: 1, retried: 0 });
+    await expect(
+      env.DB.prepare("SELECT error FROM dispatch_deliveries").first<string>("error"),
+    ).resolves.toBe("GitHub 404");
+    await expect(
+      env.DB.prepare(
+        "SELECT outcome FROM public_activity WHERE kind='dispatch' ORDER BY occurred_at DESC",
+      ).first<string>("outcome"),
+    ).resolves.toBe("failed");
   });
 
   it("isolates a failing ecosystem and advances a peer fairly through runScheduled", async () => {
