@@ -32,7 +32,7 @@ describe("public inventory", () => {
 
   it("renders aggregated public image and package inventory", async () => {
     const response = await worker.fetch(
-      new Request("https://squawk.test/"),
+      new Request("https://squawk.test/inventory"),
       env,
       createExecutionContext(),
     );
@@ -51,7 +51,7 @@ describe("public inventory", () => {
 
   it("filters without requiring authentication", async () => {
     const response = await worker.fetch(
-      new Request("https://squawk.test/?q=does-not-exist"),
+      new Request("https://squawk.test/inventory?q=does-not-exist"),
       env,
       createExecutionContext(),
     );

@@ -6,6 +6,7 @@ import { Findings } from "./views/Findings";
 import { Images } from "./views/Images";
 import { Overview } from "./views/Overview";
 import { JobsView, Sources } from "./views/Pipeline";
+import { Public } from "./views/Public";
 import { Loaded } from "./views/parts";
 
 const tabs = ["overview", "images", "findings", "jobs", "sources"] as const;
@@ -14,13 +15,7 @@ type Tab = (typeof tabs)[number];
 export function App() {
   const { isAuthenticated, isSessionLoading, sessionToken } = useSession();
   if (isSessionLoading) return <p className="status">Loading…</p>;
-  if (!isAuthenticated)
-    return (
-      <div className="login">
-        <h1>Squawk admin</h1>
-        <Descope flowId="sign-up-or-in" theme="dark" />
-      </div>
-    );
+  if (!isAuthenticated) return <Public />;
   return (
     <TokenProvider value={sessionToken ?? ""}>
       <Panel />

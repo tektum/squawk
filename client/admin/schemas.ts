@@ -61,17 +61,63 @@ const imageSchema = z.object({
 
 export const imagesSchema = z.object({ images: z.array(imageSchema) });
 
-export const imageDetailSchema = z.object({
-  image: imageSchema,
-  components: z.array(
+const componentShape = z.object({
+  package_name: z.string(),
+  ecosystem: z.string(),
+  version: z.string(),
+  purl: z.string(),
+  matchable: z.number(),
+});
+
+export const publicOverviewSchema = z.object({
+  totals: z.object({
+    images: z.number(),
+    components: z.number(),
+    matchable_components: z.number(),
+    findings: z.number(),
+    vulnerabilities: z.number(),
+    ecosystems: z.number(),
+    latest_sbom_at: z.nullable(z.number()),
+  }),
+  severity: counts,
+});
+
+export const publicImageSchema = z.object({
+  image_ref: z.string(),
+  platforms: z.nullable(z.string()),
+  components: z.number(),
+  findings: z.number(),
+  status: z.string(),
+  created_at: z.number(),
+});
+export const publicImagesSchema = z.object({ images: z.array(publicImageSchema) });
+
+export const publicImageDetailSchema = z.object({
+  platforms: z.array(
     z.object({
+      image_ref: z.string(),
+      platform: z.string(),
+      status: z.string(),
+      created_at: z.number(),
+    }),
+  ),
+  components: z.array(componentShape),
+  findings: z.array(
+    z.object({
+      vuln_id: z.string(),
       package_name: z.string(),
       ecosystem: z.string(),
       version: z.string(),
-      purl: z.string(),
-      matchable: z.number(),
+      severity: z.nullable(z.string()),
+      summary: z.nullable(z.string()),
+      detected_at: z.number(),
     }),
   ),
+});
+
+export const imageDetailSchema = z.object({
+  image: imageSchema,
+  components: z.array(componentShape),
   findings: z.array(
     z.object({
       vuln_id: z.string(),
@@ -181,3 +227,6 @@ export type Image = z.infer<typeof imageSchema>;
 export type ImageDetail = z.infer<typeof imageDetailSchema>;
 export type Finding = z.infer<typeof findingSchema>;
 export type Jobs = z.infer<typeof jobsSchema>;
+export type PublicOverview = z.infer<typeof publicOverviewSchema>;
+export type PublicImage = z.infer<typeof publicImageSchema>;
+export type PublicImageDetail = z.infer<typeof publicImageDetailSchema>;
