@@ -22,26 +22,39 @@ const packageSchema = z.object({
   version: z.string(),
 });
 
+const latestVex = `latest_vex AS (
+  SELECT org_id, package_name, ecosystem, vuln_id, status,
+    ROW_NUMBER() OVER (PARTITION BY org_id, package_name, ecosystem, vuln_id ORDER BY created_at DESC, id DESC) AS row_number
+  FROM vex_statements
+)`;
+
 export async function inventoryResponse(request: Request, database: D1Database): Promise<Response> {
   const { q } = querySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
   const like = `%${q}%`;
   const [stats, images, packages] = await Promise.all([
     database
-      .prepare(`SELECT
+      .prepare(`WITH ${latestVex} SELECT
       (SELECT COUNT(DISTINCT logical_image_ref) FROM sboms WHERE retired_at IS NULL) AS images,
       (SELECT COUNT(DISTINCT platform) FROM sboms WHERE retired_at IS NULL) AS platforms,
       (SELECT COUNT(*) FROM components c JOIN sboms s ON s.id=c.sbom_id WHERE s.retired_at IS NULL) AS components,
       (SELECT COUNT(DISTINCT package_name || char(0) || ecosystem || char(0) || version) FROM components c JOIN sboms s ON s.id=c.sbom_id WHERE s.retired_at IS NULL AND c.matchable=1) AS packages,
-      (SELECT COUNT(*) FROM findings f JOIN components c ON c.id=f.component_id JOIN sboms s ON s.id=c.sbom_id WHERE s.retired_at IS NULL) AS findings`)
+      (SELECT COUNT(*) FROM findings f
+        JOIN components c ON c.id=f.component_id JOIN sboms s ON s.id=c.sbom_id
+        LEFT JOIN latest_vex x ON x.row_number=1 AND x.org_id=f.org_id AND x.package_name=c.package_name AND x.ecosystem=c.ecosystem AND x.vuln_id=f.vuln_id
+        WHERE s.retired_at IS NULL AND f.dispatched_at IS NOT NULL AND COALESCE(x.status,'') NOT IN ('not_affected','fixed')) AS findings`)
       .first(),
     database
-      .prepare(`SELECT s.logical_image_ref AS image_ref,
+      .prepare(`WITH ${latestVex}, visible AS (
+      SELECT f.component_id,f.vuln_id FROM findings f JOIN components c ON c.id=f.component_id
+      LEFT JOIN latest_vex x ON x.row_number=1 AND x.org_id=f.org_id AND x.package_name=c.package_name AND x.ecosystem=c.ecosystem AND x.vuln_id=f.vuln_id
+      WHERE f.dispatched_at IS NOT NULL AND COALESCE(x.status,'') NOT IN ('not_affected','fixed')
+      ) SELECT s.logical_image_ref AS image_ref,
       GROUP_CONCAT(DISTINCT s.platform) AS platforms,
       COUNT(DISTINCT c.id) AS components,
       COUNT(DISTINCT f.vuln_id || char(0) || f.component_id) AS findings,
       CASE WHEN SUM(s.backfill_status!='complete')=0 THEN 'indexed' ELSE 'processing' END AS status
       FROM sboms s LEFT JOIN components c ON c.sbom_id=s.id
-      LEFT JOIN findings f ON f.component_id=c.id
+      LEFT JOIN visible f ON f.component_id=c.id
       WHERE s.retired_at IS NULL AND s.logical_image_ref LIKE ? AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*' AND length(substr(s.logical_image_ref,instr(s.logical_image_ref,'@sha256:')+8))=64
       GROUP BY s.logical_image_ref ORDER BY MAX(s.created_at) DESC LIMIT 50`)
       .bind(like)

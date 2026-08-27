@@ -8,7 +8,7 @@ const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).catch(50),
   offset: z.coerce.number().int().min(0).max(100_000).catch(0),
 });
-const refSchema = z.string().trim().min(1).max(300);
+const refSchema = z.string().regex(/@sha256:[a-f0-9]{64}$/);
 
 function json(data: unknown): Response {
   return new Response(JSON.stringify(data), {

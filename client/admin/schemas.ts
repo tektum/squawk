@@ -69,6 +69,13 @@ const componentShape = z.object({
   matchable: z.number(),
 });
 
+const publicComponentShape = z.object({
+  package_name: z.string(),
+  ecosystem: z.string(),
+  version: z.string(),
+  matchable: z.number(),
+});
+
 export const publicOverviewSchema = z.object({
   totals: z.object({
     images: z.number(),
@@ -101,7 +108,7 @@ export const publicImageDetailSchema = z.object({
       created_at: z.number(),
     }),
   ),
-  components: z.array(componentShape),
+  components: z.array(publicComponentShape),
   findings: z.array(
     z.object({
       vuln_id: z.string(),

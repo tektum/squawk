@@ -18,7 +18,7 @@ describe("public disclosure api", () => {
         "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('arm','tenant',?,?,'linux/arm64','digest','complete',11)",
       ).bind(reference, reference),
       env.DB.prepare(
-        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at,retired_at) VALUES ('old','tenant','ghcr.io/owner/old@sha256:bbbb','ghcr.io/owner/old','linux/amd64','digest2','complete',5,6)",
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('tagged','tenant','ghcr.io/owner/tagged:latest','ghcr.io/owner/tagged:latest','linux/amd64','digest2','complete',5)",
       ),
       env.DB.prepare(
         "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (1,'amd','demo<script>','npm','1.2.3','pkg:npm/demo@1.2.3',1)",
@@ -143,7 +143,7 @@ describe("public disclosure api", () => {
     );
     const body = await response.json<{
       platforms: { platform: string }[];
-      components: { purl: string }[];
+      components: { package_name: string; ecosystem: string; version: string }[];
       findings: { vuln_id: string; detected_at: number }[];
     }>();
 
@@ -151,14 +151,27 @@ describe("public disclosure api", () => {
       "linux/amd64",
       "linux/arm64",
     ]);
-    expect(body.components.map((component) => component.purl)).toEqual(["pkg:npm/demo@1.2.3"]);
+    expect(body.components).toEqual([
+      { ecosystem: "npm", matchable: 1, package_name: "demo<script>", version: "1.2.3" },
+    ]);
     expect(body.findings).toHaveLength(1);
     expect(body.findings[0]).toMatchObject({ vuln_id: "OSV-1", detected_at: 1 });
   });
 
-  it("answers an unknown reference with 404", async () => {
+  it("rejects mutable image references", async () => {
     const response = await worker.fetch(
-      new Request("https://squawk.test/public/image?ref=ghcr.io/nope"),
+      new Request("https://squawk.test/public/image?ref=ghcr.io/owner/tagged:latest"),
+      env,
+      createExecutionContext(),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("answers an unknown digest reference with 404", async () => {
+    const response = await worker.fetch(
+      new Request(
+        `https://squawk.test/public/image?ref=${encodeURIComponent(`ghcr.io/nope@sha256:${"b".repeat(64)}`)}`,
+      ),
       env,
       createExecutionContext(),
     );

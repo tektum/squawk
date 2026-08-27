@@ -43,18 +43,28 @@ export async function publicOverview(database: D1Database): Promise<PublicOvervi
   const [totals, severity] = await Promise.all([
     database
       .prepare(`WITH ${LATEST_VEX} SELECT
-      (SELECT COUNT(DISTINCT s.logical_image_ref) FROM sboms s WHERE s.retired_at IS NULL) AS images,
-      (SELECT COUNT(*) FROM components c JOIN sboms s ON s.id = c.sbom_id WHERE s.retired_at IS NULL) AS components,
-      (SELECT COUNT(*) FROM components c JOIN sboms s ON s.id = c.sbom_id WHERE s.retired_at IS NULL AND c.matchable = 1) AS matchable_components,
+      (SELECT COUNT(DISTINCT s.logical_image_ref) FROM sboms s
+        WHERE s.retired_at IS NULL AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64) AS images,
+      (SELECT COUNT(*) FROM components c JOIN sboms s ON s.id = c.sbom_id
+        WHERE s.retired_at IS NULL AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64) AS components,
+      (SELECT COUNT(*) FROM components c JOIN sboms s ON s.id = c.sbom_id
+        WHERE s.retired_at IS NULL AND c.matchable = 1 AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64) AS matchable_components,
       (SELECT COUNT(DISTINCT s.logical_image_ref || char(0) || f.vuln_id || char(0) || c.package_name || char(0) || c.ecosystem)
         FROM findings f
         JOIN components c ON c.id = f.component_id
         JOIN sboms s ON s.id = c.sbom_id
         ${VEX_JOIN}
-        WHERE s.retired_at IS NULL AND ${DISCLOSED}) AS findings,
+        WHERE s.retired_at IS NULL AND ${DISCLOSED}
+          AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64) AS findings,
       (SELECT COUNT(*) FROM vulnerabilities) AS vulnerabilities,
       (SELECT COUNT(*) FROM osv_ecosystems) AS ecosystems,
-      (SELECT MAX(s.created_at) FROM sboms s WHERE s.retired_at IS NULL) AS latest_sbom_at`)
+      (SELECT MAX(s.created_at) FROM sboms s WHERE s.retired_at IS NULL
+        AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+        AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64) AS latest_sbom_at`)
       .first<PublicTotals>(),
     database
       .prepare(`WITH ${LATEST_VEX} SELECT COALESCE(v.severity, 'unknown') AS key,
@@ -65,6 +75,8 @@ export async function publicOverview(database: D1Database): Promise<PublicOvervi
     LEFT JOIN vulnerabilities v ON v.id = f.vuln_id AND v.ecosystem = c.ecosystem AND v.package_name = c.package_name
     ${VEX_JOIN}
     WHERE s.retired_at IS NULL AND ${DISCLOSED}
+      AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+      AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
     GROUP BY key`)
       .all<{ readonly key: string; readonly total: number }>(),
   ]);
@@ -105,7 +117,10 @@ export async function publicImages(
     FROM sboms s
     LEFT JOIN components c ON c.sbom_id = s.id
     LEFT JOIN visible v ON v.component_id = c.id
-    WHERE s.retired_at IS NULL AND (? = '' OR s.logical_image_ref LIKE '%' || ? || '%')
+    WHERE s.retired_at IS NULL
+      AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+      AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
+      AND (? = '' OR s.logical_image_ref LIKE '%' || ? || '%')
     GROUP BY s.logical_image_ref
     ORDER BY MAX(s.created_at) DESC LIMIT ? OFFSET ?`)
     .bind(filters.search, filters.search, filters.limit, filters.offset)
@@ -124,7 +139,6 @@ export type PublicImageDetail = {
     readonly package_name: string;
     readonly ecosystem: string;
     readonly version: string;
-    readonly purl: string;
     readonly matchable: number;
   }[];
   readonly findings: readonly {
@@ -149,14 +163,16 @@ export async function publicImageDetail(
         s.created_at
       FROM sboms s
       WHERE s.retired_at IS NULL AND s.logical_image_ref = ?
+        AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+        AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
       ORDER BY s.platform LIMIT 50`)
       .bind(reference)
       .all<PublicPlatform>(),
     database
-      .prepare(`SELECT DISTINCT c.package_name, c.ecosystem, c.version, c.purl, MAX(c.matchable) AS matchable
+      .prepare(`SELECT c.package_name, c.ecosystem, c.version, MAX(c.matchable) AS matchable
       FROM components c JOIN sboms s ON s.id = c.sbom_id
       WHERE s.retired_at IS NULL AND s.logical_image_ref = ?
-      GROUP BY c.package_name, c.ecosystem, c.version, c.purl
+      GROUP BY c.package_name, c.ecosystem, c.version
       ORDER BY c.package_name LIMIT 500`)
       .bind(reference)
       .all<PublicComponent>(),

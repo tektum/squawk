@@ -160,15 +160,10 @@ function Detail({ reference, onBack }: { reference: string; onBack: () => void }
           </Section>
           <Section title={`Components (${data.components.length})`}>
             <Table
-              headers={["Package", "Ecosystem", "Version", "PURL"]}
+              headers={["Package", "Ecosystem", "Version"]}
               rows={data.components.map((component) => ({
-                key: component.purl,
-                cells: [
-                  component.package_name,
-                  component.ecosystem,
-                  component.version,
-                  component.purl,
-                ],
+                key: `${component.ecosystem}:${component.package_name}:${component.version}`,
+                cells: [component.package_name, component.ecosystem, component.version],
               }))}
             />
           </Section>

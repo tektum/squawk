@@ -23,7 +23,15 @@ describe("public inventory", () => {
       env.DB.prepare(
         "INSERT INTO vulnerabilities VALUES ('OSV-1','npm','demo<script>','{}','high','summary','2026-01-01T00:00:00Z')",
       ),
-      env.DB.prepare("INSERT INTO findings VALUES ('tenant',1,'OSV-1',1,NULL)"),
+      env.DB.prepare(
+        "INSERT INTO vulnerabilities VALUES ('OSV-2','npm','demo<script>','{}','low','summary','2026-01-01T00:00:00Z')",
+      ),
+      env.DB.prepare("INSERT INTO findings VALUES ('tenant',1,'OSV-1',1,2)"),
+      env.DB.prepare("INSERT INTO findings VALUES ('tenant',2,'OSV-1',1,NULL)"),
+      env.DB.prepare("INSERT INTO findings VALUES ('tenant',1,'OSV-2',1,2)"),
+      env.DB.prepare(
+        "INSERT INTO vex_statements (org_id,package_name,ecosystem,vuln_id,status,justification,created_by_descope_user_id,created_at) VALUES ('tenant','demo<script>','npm','OSV-2','not_affected',NULL,'user',3)",
+      ),
       env.DB.prepare(
         "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('tagged','tenant','ghcr.io/owner/tagged:latest','ghcr.io/owner/tagged:latest','linux/amd64','tagged','complete',1)",
       ),
