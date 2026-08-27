@@ -245,19 +245,34 @@ describe("GitHub registry package webhook", () => {
     ).toBe(0);
   });
 
+  /**
+   * Produces the rows a pre-source-tracking ingestion left behind, by ingesting for real
+   * and then clearing the provenance columns. Seeding them by hand cannot model this:
+   * the platform must be one the input schema accepts, the image_ref must be the SPDX
+   * container identity rather than the index digest, and the predicate hash must match
+   * what the fixture's attestation actually produces, or re-ingestion conflicts instead
+   * of recognising the rows.
+   */
+  async function ingestThenStripProvenance(): Promise<void> {
+    const fixture = await githubWebhookFixture();
+    const context = createExecutionContext();
+    const response = await worker.fetch(
+      fixture.request(),
+      { ...env, ...fixture.bindings },
+      context,
+    );
+    await waitOnExecutionContext(context);
+    expect(response.status, await response.clone().text()).toBe(202);
+    await env.DB.prepare("UPDATE sboms SET installation_id=NULL, repository_id=NULL").run();
+    await env.DB.prepare("DELETE FROM github_deliveries").run();
+  }
+
   it("stamps provenance on images ingested before SBOMs recorded their source", async () => {
-    // Historical rows carry no source, so their findings can never route. A receipt for
-    // the same image proves the source, but only for the receipt's own organization.
-    const logical = `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`;
-    await env.DB.batch([
-      env.DB.prepare("INSERT INTO orgs VALUES ('other','app',0)"),
-      env.DB.prepare(
-        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('historical','tenant',?,?,'linux/386','digest','complete',0)",
-      ).bind(`ghcr.io/owner/demo@sha256:${"e".repeat(64)}`, logical),
-      env.DB.prepare(
-        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('foreign','other',?,?,'linux/386','digest','complete',0)",
-      ).bind(`ghcr.io/owner/demo@sha256:${"f".repeat(64)}`, logical),
-    ]);
+    await ingestThenStripProvenance();
+    const before = await env.DB.prepare("SELECT COUNT(*) AS count FROM sboms").first<number>(
+      "count",
+    );
+    expect(before).toBe(2);
 
     const fixture = await githubWebhookFixture();
     const context = createExecutionContext();
@@ -269,28 +284,59 @@ describe("GitHub registry package webhook", () => {
     await waitOnExecutionContext(context);
 
     expect(response.status, await response.clone().text()).toBe(202);
+    // The existing rows are recognised and stamped, not replaced.
     await expect(
-      env.DB.prepare(
-        "SELECT installation_id, repository_id FROM sboms WHERE id='historical'",
-      ).first(),
-    ).resolves.toEqual({
-      installation_id: String(INSTALLATION_ID),
-      repository_id: String(REPOSITORY_ID),
-    });
-    await expect(
-      env.DB.prepare("SELECT installation_id, repository_id FROM sboms WHERE id='foreign'").first(),
-    ).resolves.toEqual({ installation_id: null, repository_id: null });
+      env.DB.prepare("SELECT COUNT(*) AS count FROM sboms").first<number>("count"),
+    ).resolves.toBe(2);
+    const stamped = await env.DB.prepare(
+      "SELECT platform, installation_id, repository_id FROM sboms ORDER BY platform",
+    ).all<{
+      readonly platform: string;
+      readonly installation_id: string | null;
+      readonly repository_id: string | null;
+    }>();
+    expect(stamped.results).toEqual([
+      {
+        platform: "linux/amd64",
+        installation_id: String(INSTALLATION_ID),
+        repository_id: String(REPOSITORY_ID),
+      },
+      {
+        platform: "linux/arm64",
+        installation_id: String(INSTALLATION_ID),
+        repository_id: String(REPOSITORY_ID),
+      },
+    ]);
+  });
+
+  it("never stamps an image belonging to another organization", async () => {
+    await ingestThenStripProvenance();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs VALUES ('other','app',0)"),
+      env.DB.prepare("UPDATE sboms SET org_id='other'"),
+    ]);
+
+    const fixture = await githubWebhookFixture();
+    const context = createExecutionContext();
+    await worker.fetch(fixture.request(), { ...env, ...fixture.bindings }, context);
+    await waitOnExecutionContext(context);
+
+    const rows = await env.DB.prepare(
+      "SELECT installation_id, repository_id FROM sboms WHERE org_id='other'",
+    ).all<{ readonly installation_id: string | null; readonly repository_id: string | null }>();
+    expect(rows.results.length).toBeGreaterThan(0);
+    for (const row of rows.results)
+      expect(row).toEqual({
+        installation_id: null,
+        repository_id: null,
+      });
   });
 
   it("leaves a partially populated provenance row untouched", async () => {
     // The two columns are independently nullable, so matching on installation_id alone
     // would overwrite a recorded repository_id with this receipt's own.
-    const logical = `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`;
-    await env.DB.prepare(
-      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at,repository_id) VALUES ('partial','tenant',?,?,'linux/386','digest','complete',0,'999')",
-    )
-      .bind(`ghcr.io/owner/demo@sha256:${"e".repeat(64)}`, logical)
-      .run();
+    await ingestThenStripProvenance();
+    await env.DB.prepare("UPDATE sboms SET repository_id='999' WHERE platform='linux/amd64'").run();
 
     const fixture = await githubWebhookFixture();
     const context = createExecutionContext();
@@ -298,7 +344,9 @@ describe("GitHub registry package webhook", () => {
     await waitOnExecutionContext(context);
 
     await expect(
-      env.DB.prepare("SELECT installation_id, repository_id FROM sboms WHERE id='partial'").first(),
+      env.DB.prepare(
+        "SELECT installation_id, repository_id FROM sboms WHERE platform='linux/amd64'",
+      ).first(),
     ).resolves.toEqual({ installation_id: null, repository_id: "999" });
   });
 
