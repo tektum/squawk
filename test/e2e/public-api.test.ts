@@ -21,6 +21,12 @@ describe("public disclosure api", () => {
         "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('tagged','tenant','ghcr.io/owner/tagged:latest','ghcr.io/owner/tagged:latest','linux/amd64','digest2','complete',5)",
       ),
       env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('malformed','tenant',?,?, 'linux/amd64','digest3','complete',6)",
+      ).bind(
+        `ghcr.io/owner/malformed@sha256:${"a".repeat(63)}z`,
+        `ghcr.io/owner/malformed@sha256:${"a".repeat(63)}z`,
+      ),
+      env.DB.prepare(
         "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (1,'amd','demo<script>','npm','1.2.3','pkg:npm/demo@1.2.3',1)",
       ),
       env.DB.prepare(

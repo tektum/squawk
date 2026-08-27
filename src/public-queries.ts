@@ -44,27 +44,32 @@ export async function publicOverview(database: D1Database): Promise<PublicOvervi
     database
       .prepare(`WITH ${LATEST_VEX} SELECT
       (SELECT COUNT(DISTINCT s.logical_image_ref) FROM sboms s
-        WHERE s.retired_at IS NULL AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
-          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64) AS images,
+        WHERE s.retired_at IS NULL AND instr(s.logical_image_ref, '@sha256:') > 0
+          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
+          AND substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8) NOT GLOB '*[^0-9a-f]*') AS images,
       (SELECT COUNT(*) FROM components c JOIN sboms s ON s.id = c.sbom_id
-        WHERE s.retired_at IS NULL AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
-          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64) AS components,
+        WHERE s.retired_at IS NULL AND instr(s.logical_image_ref, '@sha256:') > 0
+          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
+          AND substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8) NOT GLOB '*[^0-9a-f]*') AS components,
       (SELECT COUNT(*) FROM components c JOIN sboms s ON s.id = c.sbom_id
-        WHERE s.retired_at IS NULL AND c.matchable = 1 AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
-          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64) AS matchable_components,
+        WHERE s.retired_at IS NULL AND c.matchable = 1 AND instr(s.logical_image_ref, '@sha256:') > 0
+          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
+          AND substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8) NOT GLOB '*[^0-9a-f]*') AS matchable_components,
       (SELECT COUNT(DISTINCT s.logical_image_ref || char(0) || f.vuln_id || char(0) || c.package_name || char(0) || c.ecosystem)
         FROM findings f
         JOIN components c ON c.id = f.component_id
         JOIN sboms s ON s.id = c.sbom_id
         ${VEX_JOIN}
         WHERE s.retired_at IS NULL AND ${DISCLOSED}
-          AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
-          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64) AS findings,
+          AND instr(s.logical_image_ref, '@sha256:') > 0
+          AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
+          AND substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8) NOT GLOB '*[^0-9a-f]*') AS findings,
       (SELECT COUNT(*) FROM vulnerabilities) AS vulnerabilities,
       (SELECT COUNT(*) FROM osv_ecosystems) AS ecosystems,
       (SELECT MAX(s.created_at) FROM sboms s WHERE s.retired_at IS NULL
-        AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
-        AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64) AS latest_sbom_at`)
+        AND instr(s.logical_image_ref, '@sha256:') > 0
+        AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
+        AND substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8) NOT GLOB '*[^0-9a-f]*') AS latest_sbom_at`)
       .first<PublicTotals>(),
     database
       .prepare(`WITH ${LATEST_VEX} SELECT COALESCE(v.severity, 'unknown') AS key,
@@ -75,8 +80,9 @@ export async function publicOverview(database: D1Database): Promise<PublicOvervi
     LEFT JOIN vulnerabilities v ON v.id = f.vuln_id AND v.ecosystem = c.ecosystem AND v.package_name = c.package_name
     ${VEX_JOIN}
     WHERE s.retired_at IS NULL AND ${DISCLOSED}
-      AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+      AND instr(s.logical_image_ref, '@sha256:') > 0
       AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
+      AND substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8) NOT GLOB '*[^0-9a-f]*'
     GROUP BY key`)
       .all<{ readonly key: string; readonly total: number }>(),
   ]);
@@ -118,8 +124,9 @@ export async function publicImages(
     LEFT JOIN components c ON c.sbom_id = s.id
     LEFT JOIN visible v ON v.component_id = c.id
     WHERE s.retired_at IS NULL
-      AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+      AND instr(s.logical_image_ref, '@sha256:') > 0
       AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
+      AND substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8) NOT GLOB '*[^0-9a-f]*'
       AND (? = '' OR s.logical_image_ref LIKE '%' || ? || '%')
     GROUP BY s.logical_image_ref
     ORDER BY MAX(s.created_at) DESC LIMIT ? OFFSET ?`)
@@ -163,8 +170,9 @@ export async function publicImageDetail(
         s.created_at
       FROM sboms s
       WHERE s.retired_at IS NULL AND s.logical_image_ref = ?
-        AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*'
+        AND instr(s.logical_image_ref, '@sha256:') > 0
         AND length(substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8)) = 64
+        AND substr(s.logical_image_ref, instr(s.logical_image_ref, '@sha256:') + 8) NOT GLOB '*[^0-9a-f]*'
       ORDER BY s.platform LIMIT 50`)
       .bind(reference)
       .all<PublicPlatform>(),

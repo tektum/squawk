@@ -55,7 +55,10 @@ export async function inventoryResponse(request: Request, database: D1Database):
       CASE WHEN SUM(s.backfill_status!='complete')=0 THEN 'indexed' ELSE 'processing' END AS status
       FROM sboms s LEFT JOIN components c ON c.sbom_id=s.id
       LEFT JOIN visible f ON f.component_id=c.id
-      WHERE s.retired_at IS NULL AND s.logical_image_ref LIKE ? AND s.logical_image_ref GLOB '*@sha256:[0-9a-f]*' AND length(substr(s.logical_image_ref,instr(s.logical_image_ref,'@sha256:')+8))=64
+      WHERE s.retired_at IS NULL AND s.logical_image_ref LIKE ?
+        AND instr(s.logical_image_ref,'@sha256:')>0
+        AND length(substr(s.logical_image_ref,instr(s.logical_image_ref,'@sha256:')+8))=64
+        AND substr(s.logical_image_ref,instr(s.logical_image_ref,'@sha256:')+8) NOT GLOB '*[^0-9a-f]*'
       GROUP BY s.logical_image_ref ORDER BY MAX(s.created_at) DESC LIMIT 50`)
       .bind(like)
       .all(),
