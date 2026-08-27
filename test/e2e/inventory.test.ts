@@ -23,16 +23,33 @@ describe("public inventory", () => {
       env.DB.prepare(
         "INSERT INTO vulnerabilities VALUES ('OSV-1','npm','demo<script>','{}','high','summary','2026-01-01T00:00:00Z')",
       ),
-      env.DB.prepare("INSERT INTO findings VALUES ('tenant',1,'OSV-1',1,NULL)"),
+      env.DB.prepare(
+        "INSERT INTO vulnerabilities VALUES ('OSV-2','npm','demo<script>','{}','low','summary','2026-01-01T00:00:00Z')",
+      ),
+      env.DB.prepare("INSERT INTO findings VALUES ('tenant',1,'OSV-1',1,2)"),
+      env.DB.prepare("INSERT INTO findings VALUES ('tenant',2,'OSV-1',1,NULL)"),
+      env.DB.prepare("INSERT INTO findings VALUES ('tenant',1,'OSV-2',1,2)"),
+      env.DB.prepare(
+        "INSERT INTO vex_statements (org_id,package_name,ecosystem,vuln_id,status,justification,created_by_descope_user_id,created_at) VALUES ('tenant','demo<script>','npm','OSV-2','not_affected',NULL,'user',3)",
+      ),
       env.DB.prepare(
         "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('tagged','tenant','ghcr.io/owner/tagged:latest','ghcr.io/owner/tagged:latest','linux/amd64','tagged','complete',1)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('malformed','tenant',?,?,'linux/amd64','malformed','complete',1)",
+      ).bind(
+        `ghcr.io/owner/malformed@sha256:${"a".repeat(63)}z`,
+        `ghcr.io/owner/malformed@sha256:${"a".repeat(63)}z`,
+      ),
+      env.DB.prepare(
+        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (3,'malformed','hidden','npm','9.9.9','pkg:npm/hidden@9.9.9',1)",
       ),
     ]);
   });
 
   it("renders aggregated public image and package inventory", async () => {
     const response = await worker.fetch(
-      new Request("https://squawk.test/"),
+      new Request("https://squawk.test/inventory"),
       env,
       createExecutionContext(),
     );
@@ -45,13 +62,16 @@ describe("public inventory", () => {
     expect(html).toContain("linux/amd64 · linux/arm64");
     expect(html).toContain("demo&lt;script&gt;");
     expect(html).not.toContain("demo<script>");
+    expect(html).not.toContain("malformed");
+    expect(html).not.toContain("<td>hidden</td>");
+    expect(html).not.toContain("9.9.9");
     expect(html).not.toContain("ghcr.io/owner/tagged:latest");
     expect(html).toContain(">1</strong><span>findings");
   });
 
   it("filters without requiring authentication", async () => {
     const response = await worker.fetch(
-      new Request("https://squawk.test/?q=does-not-exist"),
+      new Request("https://squawk.test/inventory?q=does-not-exist"),
       env,
       createExecutionContext(),
     );

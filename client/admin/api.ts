@@ -24,14 +24,14 @@ async function call(
   path: string,
   body?: unknown,
 ): Promise<Response> {
-  if (!token) throw new ApiError(401, "Session expired");
+  const publicPath = path.startsWith("/public/");
+  if (!token && !publicPath) throw new ApiError(401, "Session expired");
   const response = await fetch(path, {
     method,
     headers: {
-      authorization: `Bearer ${token}`,
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (response.ok) return response;
   const detail = (await response.json().catch(() => ({}))) as { error?: string };
