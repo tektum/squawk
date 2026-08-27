@@ -1,3 +1,11 @@
+/** Distinguishes "the allowance ran out, work remains" from a genuine failure. */
+export class SubrequestBudgetExhausted extends Error {
+  constructor() {
+    super("subrequest budget exhausted");
+    this.name = "SubrequestBudgetExhausted";
+  }
+}
+
 export class SubrequestBudget {
   #remaining: number;
 
@@ -6,7 +14,7 @@ export class SubrequestBudget {
   }
 
   take(): void {
-    if (this.#remaining === 0) throw new Error("subrequest budget exhausted");
+    if (this.#remaining === 0) throw new SubrequestBudgetExhausted();
     this.#remaining -= 1;
   }
 
