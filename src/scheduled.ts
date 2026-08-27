@@ -201,25 +201,40 @@ async function executeScheduled(
   } catch (error) {
     console.error("Scheduled advisory requeue failed", { error: describeError(error) });
   }
-  // Dispatch records its own outcome: a swallowed failure and a stage skipped for lack
-  // of budget were previously indistinguishable from a run that dispatched nothing
-  // because there was nothing to send.
-  //
-  // The first routable row can cost three subrequests on cold caches - installation
-  // token, repository path, workflow dispatch - so entering with fewer guarantees an
-  // exhaustion throw before anything is sent. Running out mid-run is not a failure
-  // either: work simply remains for the next invocation, which is 'pending'.
-  if (env.DISPATCH_ENABLED === "true" && budget.remaining >= 3 && !deadline.expired) {
-    try {
-      await dispatchPending(env, now, budget);
-      await recordActivity(env.DB, "dispatch", "completed", now);
-    } catch (error) {
-      if (error instanceof SubrequestBudgetExhausted) {
-        await recordActivity(env.DB, "dispatch", "pending", now);
-        return;
-      }
-      await recordActivity(env.DB, "dispatch", "failed", now);
-      console.error("Scheduled dispatch failed", { error: describeError(error) });
+  await runDispatchStage(env, now, budget, deadline);
+}
+
+/** Cost of the first routable row on cold caches: installation token, repository path, POST. */
+const firstDispatchCost = 3;
+
+/**
+ * Runs dispatch and records its own outcome, so a swallowed failure and a stage skipped
+ * for lack of budget stop being indistinguishable from a run that had nothing to send.
+ *
+ * Entering with fewer subrequests than the first row costs guarantees an exhaustion throw
+ * before anything is sent. Running out mid-run is not a failure either: the work simply
+ * remains for the next invocation, which is what 'pending' records.
+ *
+ * Exported so the classification can be exercised with an injected budget instead of
+ * contriving upstream work to consume an exact amount.
+ */
+export async function runDispatchStage(
+  env: ScheduledEnv,
+  now: number,
+  budget: SubrequestBudget,
+  deadline: RunDeadline,
+): Promise<void> {
+  if (env.DISPATCH_ENABLED !== "true" || budget.remaining < firstDispatchCost) return;
+  if (deadline.expired) return;
+  try {
+    await dispatchPending(env, now, budget);
+    await recordActivity(env.DB, "dispatch", "completed", now);
+  } catch (error) {
+    if (error instanceof SubrequestBudgetExhausted) {
+      await recordActivity(env.DB, "dispatch", "pending", now);
+      return;
     }
+    await recordActivity(env.DB, "dispatch", "failed", now);
+    console.error("Scheduled dispatch failed", { error: describeError(error) });
   }
 }
