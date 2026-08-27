@@ -21,7 +21,7 @@ main{max-width:1160px;margin:auto;padding:0 30px 72px}
 .topbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:14px;height:58px;padding:0 30px;
 background:rgba(6,13,18,.86);backdrop-filter:blur(8px);border-bottom:1px solid var(--vr-border)}
 .wordmark{font:400 17px/1 var(--vr-font-display);letter-spacing:.18em}
-.topbar-meta{font:11px/1 var(--vr-font-code);letter-spacing:.14em;text-transform:uppercase;color:var(--vr-text-dim)}
+.topbar-meta{font:11px/1 var(--vr-font-code);letter-spacing:.14em;text-transform:uppercase;color:var(--vr-text-muted)}
 .eyebrow,dt,th,label,.section-title span,footer,.status,.eco,.stats span{font-family:var(--vr-font-code);
 font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--vr-text-muted)}
 header{padding:62px 0 44px;border-bottom:1px solid var(--vr-line)}
