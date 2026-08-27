@@ -13,6 +13,7 @@ import {
 import { SbomIdSchema, vexInputSchema } from "./domain";
 import { safeIssues } from "./error-detail";
 import { inventoryResponse } from "./inventory";
+import { registerPublicRoutes } from "./public-api";
 import { appendVex, listFindings, retireSbom } from "./repository";
 import { PredicateError } from "./sbom";
 import { runScheduled } from "./scheduled";
@@ -30,7 +31,8 @@ app.use("*", async (context, next) => {
   const url = new URL(context.req.url);
   if (!insecurePublicRequest(url)) return next();
   if (url.pathname.startsWith("/v1/")) return context.json({ error: "https required" }, 403);
-  if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) return httpsRedirect(url);
+  if (url.pathname === "/admin" || url.pathname.startsWith("/admin/") || url.pathname === "/")
+    return httpsRedirect(url);
   await next();
 });
 
@@ -45,7 +47,11 @@ app.get("/admin", (context) =>
 
 app.get("/admin/app.js", (context) => adminClientResponse(context.req.raw));
 
-app.get("/", (context) => inventoryResponse(context.req.raw, context.env.DB));
+app.get("/", (context) =>
+  adminShellResponse(context.env.DESCOPE_PROJECT_ID, context.env.DESCOPE_BASE_URL),
+);
+
+app.get("/inventory", (context) => inventoryResponse(context.req.raw, context.env.DB));
 
 app.get("/activity", (context) => activityResponse(context.env.DB));
 
@@ -79,6 +85,8 @@ app.use("/v1/*", async (context, next) => {
 });
 
 registerAdminRoutes(app);
+
+registerPublicRoutes(app);
 
 app.post("/v1/operations/scheduled", async (context) => {
   const principal = context.get("principal");

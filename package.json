@@ -26,8 +26,8 @@
     "build:admin": "bun scripts/build-admin.ts"
   },
   "dependencies": {
-    "@descope/node-sdk": "2.14.0",
-    "hono": "4.13.3",
+    "@descope/node-sdk": "2.15.0",
+    "hono": "4.13.4",
     "jose": "6.2.10",
     "zod": "4.4.3"
   },
@@ -37,7 +37,7 @@
     "@descope/react-sdk": "3.2.1",
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.4",
+    "@types/react-dom": "19.2.5",
     "bun-types": "1.4.0",
     "msw": "2.15.0",
     "react": "19.2.8",
