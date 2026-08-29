@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@descope/node-sdk": "2.15.0",
-    "hono": "4.13.4",
+    "hono": "4.13.5",
     "jose": "6.2.10",
     "zod": "4.4.3"
   },
