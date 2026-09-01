@@ -37,10 +37,21 @@ export async function enqueueIngestion(env: WebhookEnv, job: IngestionJob, now =
 /**
  * Records an accepted ingestion delivery and removes the corresponding ingestion job.
  *
+ * Also stamps provenance on SBOM rows for this image that were ingested before SBOMs
+ * recorded their source, so images published before that column existed become
+ * routable once seen again.
+ *
  * @param job - The ingestion job to finalize
+ * @param orgId - The organization resolved for this run, so the stamp and the ingested
+ *   SBOMs agree on one owner even if the source is reassigned mid-run
  * @param now - The timestamp to use for delivery creation and completion
  */
-async function finishIngestion(env: Pick<WebhookEnv, "DB">, job: IngestionJob, now: number) {
+async function finishIngestion(
+  env: Pick<WebhookEnv, "DB">,
+  job: IngestionJob,
+  orgId: string,
+  now: number,
+) {
   await env.DB.batch([
     env.DB.prepare(
       "INSERT OR IGNORE INTO github_deliveries (delivery_id,deployment_id,installation_id,repository_id,statement_sha256,subject_digest,status,created_at,completed_at) VALUES (?,?,?,?,?,?,'accepted',?,?)",
@@ -57,6 +68,10 @@ async function finishIngestion(env: Pick<WebhookEnv, "DB">, job: IngestionJob, n
     env.DB.prepare(
       "DELETE FROM github_ingestion_jobs WHERE installation_id=? AND repository_id=? AND subject_digest=?",
     ).bind(job.installationId, job.repositoryId, job.subjectDigest),
+    env.DB.prepare(
+      `UPDATE sboms SET installation_id=?, repository_id=? WHERE installation_id IS NULL
+       AND repository_id IS NULL AND logical_image_ref=? AND org_id=?`,
+    ).bind(job.installationId, job.repositoryId, `${job.image}@${job.subjectDigest}`, orgId),
   ]);
 }
 
@@ -115,7 +130,7 @@ export async function ingestPendingImage(
       .bind(`${job.image}@${job.subjectDigest}`)
       .first();
     if (ingested) {
-      await finishIngestion(env, job, now);
+      await finishIngestion(env, job, source.org_id, now);
       return "complete" as const;
     }
     await env.DB.prepare(
@@ -194,7 +209,7 @@ export async function ingestPendingImage(
       )
       .run();
   }
-  await finishIngestion(env, job, now);
+  await finishIngestion(env, job, source.org_id, now);
   const backfills = result.createdSbomIds.map((sbomId) =>
     backfillSbom({
       database: env.DB,
