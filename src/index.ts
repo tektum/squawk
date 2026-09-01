@@ -1,7 +1,8 @@
 import { recordActivity } from "./activity";
 import { advisoryMessageSchema, processAdvisory } from "./advisory";
 import { app } from "./app";
-import { dispatchMessageSchema, dispatchOne } from "./dispatch";
+import { dispatchMessageSchema } from "./dispatch";
+import { dispatchOne } from "./dispatch-worker";
 import { describeError } from "./error-detail";
 import { runScheduled } from "./scheduled";
 

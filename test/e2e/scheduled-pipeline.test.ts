@@ -2,7 +2,8 @@ import { env } from "cloudflare:test";
 import { exportPKCS8, generateKeyPair } from "jose";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { enqueueDispatch } from "../../src/dispatch";
+import { dispatchMessageSchema, enqueueDispatch } from "../../src/dispatch";
+import { dispatchOne } from "../../src/dispatch-worker";
 import { runDispatchStage, runScheduled } from "../../src/scheduled";
 import { drainQueue, recordingQueue } from "../queue";
 import { githubWebhookFixture, INSTALLATION_ID, REPOSITORY_ID } from "../fixtures/github-webhook";
@@ -105,6 +106,51 @@ describe("durable multi-platform dispatch", () => {
     expect(await enqueueDispatch(dispatchEnv, 2000)).toBe(0);
   });
 
+  it("atomically leases a claim before concurrent queue deliveries can POST", async () => {
+    const pair = await generateKeyPair("RS256", { extractable: true });
+    const privateKey = await exportPKCS8(pair.privateKey);
+    let posts = 0;
+    respond({
+      method: "POST",
+      url: "https://api.github.com/app/installations/123/access_tokens",
+      status: 201,
+      body: { token: "installation-token" },
+    });
+    respond({
+      url: "https://api.github.com/repositories/9",
+      status: 200,
+      body: { full_name: "owner/repo" },
+    });
+    server.use(
+      http.post(
+        "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
+        () => {
+          posts += 1;
+          return new HttpResponse(null, { status: 204 });
+        },
+      ),
+    );
+    const producer = recordingQueue();
+    const dispatchEnv = {
+      DB: env.DB,
+      GH_APP_ID: "42",
+      GH_APP_INSTALLATION_ID: "123",
+      GH_APP_PRIVATE_KEY: privateKey,
+      FINDING_DISPATCH: producer.queue,
+    };
+    await enqueueDispatch(dispatchEnv, 1_000);
+    const message = dispatchMessageSchema.parse(producer.sent[0]?.body);
+
+    await Promise.allSettled([
+      dispatchOne(dispatchEnv, message, 2_000),
+      dispatchOne(dispatchEnv, message, 2_000),
+    ]);
+
+    expect(posts).toBe(1);
+    await expect(
+      env.DB.prepare("SELECT status FROM dispatch_deliveries").first<string>("status"),
+    ).resolves.toBe("accepted");
+  });
   it("routes a digest published by two sources to each publishing repository", async () => {
     const pair = await generateKeyPair("RS256", { extractable: true });
     const privateKey = await exportPKCS8(pair.privateKey);
@@ -356,7 +402,7 @@ describe("durable multi-platform dispatch", () => {
     expect(drained).toEqual({ acked: 0, retried: 1 });
     await expect(
       env.DB.prepare(
-        "SELECT COUNT(*) AS count FROM dispatch_deliveries WHERE status='failed'",
+        "SELECT COUNT(*) AS count FROM dispatch_deliveries WHERE status='pending'",
       ).first<number>("count"),
     ).resolves.toBe(1);
     await expect(

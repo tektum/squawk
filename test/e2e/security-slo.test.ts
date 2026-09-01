@@ -2,7 +2,8 @@ import { env } from "cloudflare:test";
 import { exportPKCS8, generateKeyPair } from "jose";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { backfillSbom } from "../../src/backfill";
-import { dispatchMessageSchema, dispatchOne, enqueueDispatch } from "../../src/dispatch";
+import { dispatchMessageSchema, enqueueDispatch } from "../../src/dispatch";
+import { dispatchOne } from "../../src/dispatch-worker";
 import { drainQueue, recordingQueue } from "../queue";
 import { respond } from "../http";
 
@@ -120,10 +121,9 @@ describe("security faults and scheduled SLOs", () => {
       url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
       status: 204,
     });
-    await expect(drainQueue("squawk-finding-dispatch", jobs, environment)).resolves.toEqual({
-      acked: 1,
-      retried: 0,
-    });
+    await expect(
+      dispatchOne(environment, dispatchMessageSchema.parse(jobs[0]), Date.now() + 21_000),
+    ).resolves.toBe(true);
     await expect(
       env.DB.prepare(
         "SELECT delivery_id FROM dispatch_deliveries WHERE status='accepted'",
