@@ -2,7 +2,6 @@ import { env } from "cloudflare:test";
 import { exportPKCS8, generateKeyPair } from "jose";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { RunDeadline, SubrequestBudget } from "../../src/budget";
 import { enqueueDispatch } from "../../src/dispatch";
 import { runDispatchStage, runScheduled } from "../../src/scheduled";
 import { drainQueue, recordingQueue } from "../queue";
@@ -167,8 +166,7 @@ describe("durable multi-platform dispatch", () => {
 
   it("skips findings whose image has no dispatch target instead of calling GitHub", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const pair = await generateKeyPair("RS256", { extractable: true });
-    const privateKey = await exportPKCS8(pair.privateKey);
+    // No key is needed: enqueueing never contacts GitHub, which is the whole point.
     // A source with no configured target, which is what an unseeded install looks like.
     await env.DB.prepare("UPDATE github_sources SET dispatch_workflow=NULL").run();
 
