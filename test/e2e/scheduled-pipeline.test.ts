@@ -72,6 +72,7 @@ describe("durable multi-platform dispatch", () => {
     // Enqueueing claims the group and touches D1 only.
     expect(await enqueueDispatch(dispatchEnv, 1000)).toBe(1);
     expect(producer.sent).toHaveLength(1);
+    expect(Object.keys(producer.sent[0]?.body as object)).toEqual(["deliveryId"]);
     await expect(
       env.DB.prepare(
         "SELECT COUNT(*) AS count FROM dispatch_deliveries WHERE status='pending'",
@@ -278,18 +279,41 @@ describe("durable multi-platform dispatch", () => {
     expect(producer.sent).toHaveLength(2);
   });
 
-  it("records a dead-letter message instead of letting it accumulate unseen", async () => {
+  it("records a dead-letter claim instead of letting it accumulate unseen", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const producer = recordingQueue();
+    await enqueueDispatch({ DB: env.DB, FINDING_DISPATCH: producer.queue }, 1_000);
 
-    const drained = await drainQueue("squawk-finding-dispatch-dlq", [{ deliveryId: "spent" }], env);
+    const drained = await drainQueue(
+      "squawk-finding-dispatch-dlq",
+      producer.sent.map((message) => message.body),
+      env,
+    );
 
     expect(drained).toEqual({ acked: 1, retried: 0 });
+    await expect(
+      env.DB.prepare(
+        "SELECT status || ':' || error AS result FROM dispatch_deliveries",
+      ).first<string>("result"),
+    ).resolves.toBe("failed:dead-letter queue");
     await expect(
       env.DB.prepare(
         "SELECT outcome FROM public_activity WHERE kind='dispatch' ORDER BY occurred_at DESC",
       ).first<string>("outcome"),
     ).resolves.toBe("failed");
     error.mockRestore();
+  });
+
+  it("cannot route a forged queue message without a D1 claim", async () => {
+    const drained = await drainQueue(
+      "squawk-finding-dispatch",
+      [{ deliveryId: "0".repeat(64) }],
+      env,
+    );
+    expect(drained).toEqual({ acked: 1, retried: 0 });
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM dispatch_deliveries").first<number>("count"),
+    ).resolves.toBe(0);
   });
 
   it.each([429, 500])("redelivers a %s GitHub dispatch instead of dropping it", async (status) => {
@@ -387,6 +411,10 @@ describe("durable multi-platform dispatch", () => {
         "SELECT outcome FROM public_activity WHERE kind='dispatch' ORDER BY occurred_at DESC",
       ).first<string>("outcome"),
     ).resolves.toBe("failed");
+    // Permanent failures stay quarantined until an operator explicitly resets the claim;
+    // the next cron must not recreate the same hopeless message forever.
+    expect(await enqueueDispatch(dispatchEnv, 20 * 60_000)).toBe(0);
+    expect(producer.sent).toHaveLength(1);
   });
 
   it("isolates a failing ecosystem and advances a peer fairly through runScheduled", async () => {

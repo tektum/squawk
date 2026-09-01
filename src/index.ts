@@ -42,8 +42,19 @@ export default {
 };
 
 async function recordDeadLetters(batch: MessageBatch, database: D1Database): Promise<void> {
-  const kind = batch.queue.includes("finding-dispatch") ? "dispatch" : "advisory";
+  const dispatch = batch.queue.includes("finding-dispatch");
+  const kind = dispatch ? "dispatch" : "advisory";
   for (const message of batch.messages) {
+    if (dispatch) {
+      const parsed = dispatchMessageSchema.safeParse(message.body);
+      if (parsed.success)
+        await database
+          .prepare(
+            "UPDATE dispatch_deliveries SET status='failed',attempted_at=?,error='dead-letter queue' WHERE delivery_id=?",
+          )
+          .bind(Date.now(), parsed.data.deliveryId)
+          .run();
+    }
     await recordActivity(database, kind, "failed");
     console.error("Queue message exhausted its retries", { queue: batch.queue });
     message.ack();
