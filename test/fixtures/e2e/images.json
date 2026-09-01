@@ -1,0 +1,95 @@
+{
+  "vulnerable": {
+    "name": "wolfi-base",
+    "image": "ghcr.io/tektum/wolfi-base",
+    "indexDigest": "sha256:3f800eaa63c6789c4fb67da9a267dc1639074b1cb5e64ef63142b66e6fc10060",
+    "platforms": [
+      {
+        "platform": "linux/amd64",
+        "manifestDigest": "sha256:7f7a929a52e91924da135756fee7d8460a69c9ebc609bb4ce8b7a26e44fe5d96",
+        "spdx": "spdx/wolfi-base-amd64.json"
+      },
+      {
+        "platform": "linux/arm64",
+        "manifestDigest": "sha256:3b3ff72e855c531ab04f669e7576ad199506ae8f7920d087e3bb50b22390e790",
+        "spdx": "spdx/wolfi-base-arm64.json"
+      }
+    ],
+    "expectedFindings": [
+      {
+        "packageName": "busybox",
+        "ecosystem": "Wolfi",
+        "version": "1.37.0-r61",
+        "vulnId": "CGA-2j2v-fjrw-cqrr",
+        "severity": null
+      },
+      {
+        "packageName": "busybox",
+        "ecosystem": "Wolfi",
+        "version": "1.37.0-r61",
+        "vulnId": "CGA-3qcv-c3w8-rph5",
+        "severity": null
+      },
+      {
+        "packageName": "busybox",
+        "ecosystem": "Wolfi",
+        "version": "1.37.0-r61",
+        "vulnId": "CGA-cq83-w7fm-m6wj",
+        "severity": null
+      },
+      {
+        "packageName": "busybox",
+        "ecosystem": "Wolfi",
+        "version": "1.37.0-r61",
+        "vulnId": "CGA-qjg5-83w4-3p7w",
+        "severity": null
+      },
+      {
+        "packageName": "libcrypto3",
+        "ecosystem": "Wolfi",
+        "version": "3.6.3-r3",
+        "vulnId": "CGA-2ppc-wv7h-jh62",
+        "severity": null
+      },
+      {
+        "packageName": "libcrypto3",
+        "ecosystem": "Wolfi",
+        "version": "3.6.3-r3",
+        "vulnId": "CGA-8xxm-gc5x-rmjg",
+        "severity": null
+      },
+      {
+        "packageName": "libssl3",
+        "ecosystem": "Wolfi",
+        "version": "3.6.3-r3",
+        "vulnId": "CGA-2ppc-wv7h-jh62",
+        "severity": null
+      },
+      {
+        "packageName": "libssl3",
+        "ecosystem": "Wolfi",
+        "version": "3.6.3-r3",
+        "vulnId": "CGA-8xxm-gc5x-rmjg",
+        "severity": null
+      }
+    ]
+  },
+  "clean": {
+    "name": "alertmanager",
+    "image": "ghcr.io/tektum/alertmanager",
+    "indexDigest": "sha256:e4295dbb13247e76d054dc9d323a424d68b16390b3296e8426ee826561d8f312",
+    "platforms": [
+      {
+        "platform": "linux/amd64",
+        "manifestDigest": "sha256:cc9f10901de1aa9f03986a4ea378748049843c28219cbfeb47ae7cb4cbed0dc5",
+        "spdx": "spdx/alertmanager-amd64.json"
+      },
+      {
+        "platform": "linux/arm64",
+        "manifestDigest": "sha256:5599c2717bfc8e95afc0f7436ea7ee1b51de56f7b175f29f8067e404dbf39a62",
+        "spdx": "spdx/alertmanager-arm64.json"
+      }
+    ],
+    "expectedFindings": []
+  }
+}

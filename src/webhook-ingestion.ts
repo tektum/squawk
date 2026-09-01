@@ -70,7 +70,7 @@ async function finishIngestion(env: Pick<WebhookEnv, "DB">, job: IngestionJob, n
  * @throws WebhookError If the repository is not configured, a matching SPDX statement is missing, or platform submissions conflict
  */
 export async function ingestPendingImage(
-  env: Pick<WebhookEnv, "DB" | "OSV_API_URL" | "OSV_BASE_URL"> & {
+  env: Pick<WebhookEnv, "DB" | "OSV_API_URL" | "OSV_BASE_URL" | "GHCR_URL"> & {
     readonly EXECUTION_CONTEXT?: ExecutionContext;
   },
   job: IngestionJob,
@@ -88,6 +88,7 @@ export async function ingestPendingImage(
     job.subjectDigest,
     budget,
     job.nextDescriptor,
+    env.GHCR_URL,
   );
   const sawSpdx = (job.sawSpdx ?? false) || registry.sawStatement;
   const statements = registry.statements;

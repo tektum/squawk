@@ -11,3 +11,4 @@ worker-configuration.d.ts
 .dev.vars
 *.tfstate
 *.tfstate.*
+wrangler.e2e.local.json

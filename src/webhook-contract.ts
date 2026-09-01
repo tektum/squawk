@@ -53,6 +53,8 @@ export type WebhookEnv = GitHubAppEnv & {
   readonly GH_WEBHOOK_SECRET: string;
   readonly OSV_API_URL: string;
   readonly OSV_BASE_URL: string;
+  /** Overridden only so a local end-to-end run can serve a fake registry. */
+  readonly GHCR_URL?: string;
 };
 
 export class WebhookError extends Error {
