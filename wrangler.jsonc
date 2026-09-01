@@ -14,7 +14,10 @@
   ],
   "triggers": { "crons": ["0 */4 * * *"] },
   "queues": {
-    "producers": [{ "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-osv-advisories" }],
+    "producers": [
+      { "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-osv-advisories" },
+      { "binding": "FINDING_DISPATCH", "queue": "squawk-finding-dispatch" }
+    ],
     "consumers": [
       {
         "queue": "squawk-osv-advisories",
@@ -24,6 +27,29 @@
         "retry_delay": 60,
         "dead_letter_queue": "squawk-osv-advisories-dlq",
         "max_concurrency": 10
+      },
+      {
+        "queue": "squawk-finding-dispatch",
+        "max_batch_size": 3,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "retry_delay": 30,
+        "dead_letter_queue": "squawk-finding-dispatch-dlq",
+        "max_concurrency": 10
+      },
+      {
+        "queue": "squawk-osv-advisories-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 1,
+        "max_concurrency": 1
+      },
+      {
+        "queue": "squawk-finding-dispatch-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 1,
+        "max_concurrency": 1
       }
     ]
   },
@@ -41,7 +67,10 @@
         "DISPATCH_ENABLED": "true"
       },
       "queues": {
-        "producers": [{ "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-staging-osv-advisories" }],
+        "producers": [
+          { "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-staging-osv-advisories" },
+          { "binding": "FINDING_DISPATCH", "queue": "squawk-staging-finding-dispatch" }
+        ],
         "consumers": [
           {
             "queue": "squawk-staging-osv-advisories",
@@ -51,6 +80,29 @@
             "retry_delay": 60,
             "dead_letter_queue": "squawk-staging-osv-advisories-dlq",
             "max_concurrency": 10
+          },
+          {
+            "queue": "squawk-staging-finding-dispatch",
+            "max_batch_size": 3,
+            "max_batch_timeout": 5,
+            "max_retries": 3,
+            "retry_delay": 30,
+            "dead_letter_queue": "squawk-staging-finding-dispatch-dlq",
+            "max_concurrency": 10
+          },
+          {
+            "queue": "squawk-staging-osv-advisories-dlq",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 1,
+            "max_concurrency": 1
+          },
+          {
+            "queue": "squawk-staging-finding-dispatch-dlq",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 1,
+            "max_concurrency": 1
           }
         ]
       }
@@ -63,7 +115,8 @@
       },
       "queues": {
         "producers": [
-          { "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-production-osv-advisories" }
+          { "binding": "OSV_ADVISORY_JOBS", "queue": "squawk-production-osv-advisories" },
+          { "binding": "FINDING_DISPATCH", "queue": "squawk-production-finding-dispatch" }
         ],
         "consumers": [
           {
@@ -74,6 +127,29 @@
             "retry_delay": 60,
             "dead_letter_queue": "squawk-production-osv-advisories-dlq",
             "max_concurrency": 10
+          },
+          {
+            "queue": "squawk-production-finding-dispatch",
+            "max_batch_size": 3,
+            "max_batch_timeout": 5,
+            "max_retries": 3,
+            "retry_delay": 30,
+            "dead_letter_queue": "squawk-production-finding-dispatch-dlq",
+            "max_concurrency": 10
+          },
+          {
+            "queue": "squawk-production-osv-advisories-dlq",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 1,
+            "max_concurrency": 1
+          },
+          {
+            "queue": "squawk-production-finding-dispatch-dlq",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 1,
+            "max_concurrency": 1
           }
         ]
       }

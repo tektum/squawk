@@ -10,9 +10,12 @@ export type WorkerBindings = {
   readonly GH_APP_INSTALLATION_ID: string;
   readonly GH_APP_PRIVATE_KEY: string;
   readonly GH_WEBHOOK_SECRET: string;
+  readonly GHCR_URL?: string;
+  readonly GITHUB_API_URL?: string;
   readonly OSV_API_URL: string;
   readonly OSV_ADVISORY_JOBS: Queue;
   readonly OSV_BASE_URL: string;
+  readonly FINDING_DISPATCH: Queue;
   readonly EXECUTION_CONTEXT: ExecutionContext;
 };
 

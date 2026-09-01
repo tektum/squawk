@@ -23,6 +23,32 @@ const tenantId = "local-tenant";
 const { checks, record } = createReporter();
 
 /**
+ * Triggers exactly one scheduled pass and waits for the outcome it records. `scheduled`
+ * hands work to `waitUntil`, so the HTTP response returns before anything is written.
+ */
+async function scheduledOnce(
+  worker: LocalWorker,
+  config: string,
+  workspace: string,
+): Promise<void> {
+  const completed = (): number =>
+    Number(
+      query<RunsRow>(
+        config,
+        workspace,
+        "SELECT COUNT(*) AS runs FROM public_activity WHERE kind='cron'",
+      )[0]?.runs ?? 0,
+    );
+  const before = completed();
+  const response = await fetch(`${worker.url}/__scheduled?cron=0+*/4+*+*+*`);
+  if (!response.ok) throw new Error(`scheduled run failed with ${response.status}`);
+  await response.text();
+  const deadline = Date.now() + 30_000;
+  while (completed() === before && Date.now() < deadline) await Bun.sleep(200);
+  if (completed() === before) throw new Error("scheduled run never recorded an outcome");
+}
+
+/**
  * Each run advances ingestion, backfill, advisory resolution and dispatch within one
  * subrequest budget, so the pipeline needs several. `scheduled` hands the work to
  * `waitUntil`, so the HTTP response returns before anything is written: each run is
@@ -222,6 +248,59 @@ try {
       String(payload.logical_image_ref).startsWith(fixtures.images.clean.image),
     ),
     `clean image ${fixtures.images.clean.name}`,
+  );
+
+  // The regression that started this: ingestion used to spend the whole subrequest
+  // allowance before dispatch was reached, so 1508 production findings never sent one.
+  // Enqueueing is now D1-only, so a backlog cannot starve it.
+  const backlog = 40;
+  query(
+    config,
+    workspace,
+    Array.from(
+      { length: backlog },
+      (_, index) =>
+        `INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,created_at)
+         VALUES ('sha256:${index.toString(16).padStart(64, "0")}','${installationId}','${repositoryId}','ghcr.io/tektum/backlog-${index}@sha256:${index.toString(16).padStart(64, "0")}','pending',0);`,
+    ).join("\n"),
+  );
+  query(
+    config,
+    workspace,
+    `DELETE FROM dispatch_deliveries;
+     DELETE FROM public_activity;
+     UPDATE findings SET dispatched_at=NULL;`,
+  );
+  origin.reset();
+  // Exactly one pass. Draining to quiescence would hide the bug: later passes have no
+  // ingestion left, so a budget-dependent dispatch would eventually deliver anyway.
+  // Production never gets a clear pass, which is why it never dispatched at all.
+  await scheduledOnce(worker, config, workspace);
+  const deliveredBy = Date.now() + 20_000;
+  while (origin.dispatches.length === 0 && Date.now() < deliveredBy) await Bun.sleep(250);
+
+  const pressured = query<ActivityRow>(
+    config,
+    workspace,
+    "SELECT kind, outcome, COUNT(*) AS count FROM public_activity GROUP BY kind, outcome",
+  );
+  const attempted = query<CountRow>(
+    config,
+    workspace,
+    "SELECT COUNT(*) AS count FROM github_ingestion_jobs WHERE attempted_at IS NOT NULL",
+  );
+  record(
+    "an ingestion backlog consumes the run's allowance",
+    (attempted[0]?.count ?? 0) > 0,
+    `${String(attempted[0]?.count)} of ${backlog} backlog jobs attempted`,
+  );
+  record(
+    "dispatch still delivers under that backlog",
+    origin.dispatches.length > 0,
+    `${origin.dispatches.length} workflow_dispatch calls, activity ${pressured
+      .filter((row) => row.kind === "dispatch")
+      .map((row) => `${row.outcome}=${String(row.count)}`)
+      .join(" ")}`,
   );
 
   const activity = query<ActivityRow>(

@@ -3,6 +3,7 @@ import { exportPKCS8, generateKeyPair } from "jose";
 import { beforeEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import { runScheduled } from "../../src/scheduled";
+import { drainQueue, recordingQueue } from "../queue";
 import { githubWebhookFixture, INSTALLATION_ID, REPOSITORY_ID } from "../fixtures/github-webhook";
 import { respond } from "../http";
 
@@ -43,18 +44,24 @@ describe("vulnerable published image", () => {
       status: 204,
     });
     await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 1)").run();
-    await runScheduled(
-      {
-        ...env,
-        ...fixture.bindings,
-        DISPATCH_ENABLED: "true",
-        GH_APP_ID: "1234",
-        GH_APP_INSTALLATION_ID: String(INSTALLATION_ID),
-        OSV_API_URL: "https://api.osv.test",
-        OSV_BASE_URL: "https://osv.test",
-        GH_APP_PRIVATE_KEY: await exportPKCS8(keys.privateKey),
-      },
-      2_000,
+    const producer = recordingQueue();
+    const bindings = {
+      ...env,
+      ...fixture.bindings,
+      DISPATCH_ENABLED: "true",
+      GH_APP_ID: "1234",
+      GH_APP_INSTALLATION_ID: String(INSTALLATION_ID),
+      OSV_API_URL: "https://api.osv.test",
+      OSV_BASE_URL: "https://osv.test",
+      GH_APP_PRIVATE_KEY: await exportPKCS8(keys.privateKey),
+      FINDING_DISPATCH: producer.queue,
+    };
+    await runScheduled(bindings, 2_000);
+    // The scheduled run claims and enqueues; the queue consumer is what calls GitHub.
+    await drainQueue(
+      "squawk-finding-dispatch",
+      producer.sent.map((message) => message.body),
+      bindings,
     );
 
     expect(response.status, await response.clone().text()).toBe(202);

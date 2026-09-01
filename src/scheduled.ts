@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { recordActivity } from "./activity";
 import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
-import { RunDeadline, SubrequestBudget, SubrequestBudgetExhausted } from "./budget";
-import { dispatchPending } from "./dispatch";
+import { RunDeadline, SubrequestBudget } from "./budget";
+import { type DispatchEnv, type DispatchQueueEnv, enqueueDispatch } from "./dispatch";
 import { describeError } from "./error-detail";
 import { discoverAdvisories, requeueAdvisoryJobs } from "./sync";
 import { type IngestionJob, ingestPendingImage } from "./webhook-ingestion";
 
-type ScheduledEnv = Parameters<typeof dispatchPending>[0] &
+type ScheduledEnv = DispatchEnv &
+  DispatchQueueEnv &
   Parameters<typeof ingestPendingImage>[0] & {
     readonly DISPATCH_ENABLED: string;
     readonly OSV_API_URL: string;
@@ -201,40 +202,25 @@ async function executeScheduled(
   } catch (error) {
     console.error("Scheduled advisory requeue failed", { error: describeError(error) });
   }
-  await runDispatchStage(env, now, budget, deadline);
+  await runDispatchStage(env, now);
 }
 
-/** Cost of the first routable row on cold caches: installation token, repository path, POST. */
-const firstDispatchCost = 3;
-
 /**
- * Runs dispatch and records its own outcome, so a swallowed failure and a stage skipped
- * for lack of budget stop being indistinguishable from a run that had nothing to send.
+ * Hands every dispatchable finding group to the queue. Enqueueing touches D1 only, so it
+ * cannot be starved by the ingestion and matching work that shares this run's subrequest
+ * allowance - which is exactly how dispatch went 1508 findings without sending one.
  *
- * Entering with fewer subrequests than the first row costs guarantees an exhaustion throw
- * before anything is sent. Running out mid-run is not a failure either: the work simply
- * remains for the next invocation, which is what 'pending' records.
- *
- * Exported so the classification can be exercised with an injected budget instead of
- * contriving upstream work to consume an exact amount.
+ * Each message then dispatches in its own invocation with its own allowance, and the queue
+ * owns retries, backoff and the dead-letter path.
  */
-export async function runDispatchStage(
-  env: ScheduledEnv,
-  now: number,
-  budget: SubrequestBudget,
-  deadline: RunDeadline,
-): Promise<void> {
-  if (env.DISPATCH_ENABLED !== "true" || budget.remaining < firstDispatchCost) return;
-  if (deadline.expired) return;
+export async function runDispatchStage(env: ScheduledEnv, now: number): Promise<void> {
+  if (env.DISPATCH_ENABLED !== "true") return;
   try {
-    await dispatchPending(env, now, budget);
-    await recordActivity(env.DB, "dispatch", "completed", now);
+    const enqueued = await enqueueDispatch(env, now);
+    // 'pending' means work is now owned by the queue; 'ignored' means there was none.
+    await recordActivity(env.DB, "dispatch", enqueued > 0 ? "pending" : "ignored", now);
   } catch (error) {
-    if (error instanceof SubrequestBudgetExhausted) {
-      await recordActivity(env.DB, "dispatch", "pending", now);
-      return;
-    }
     await recordActivity(env.DB, "dispatch", "failed", now);
-    console.error("Scheduled dispatch failed", { error: describeError(error) });
+    console.error("Scheduled dispatch enqueue failed", { error: describeError(error) });
   }
 }
