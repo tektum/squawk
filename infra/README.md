@@ -42,9 +42,14 @@ No modules.
 | Name | Type |
 | ---- | ---- |
 | [cloudflare_d1_database.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/d1_database) | resource |
+| [cloudflare_queue.finding_dispatch](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue) | resource |
+| [cloudflare_queue.finding_dispatch_dlq](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue) | resource |
 | [cloudflare_queue.osv_advisories](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue) | resource |
 | [cloudflare_queue.osv_advisories_dlq](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue) | resource |
+| [cloudflare_queue_consumer.finding_dispatch](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue_consumer) | resource |
+| [cloudflare_queue_consumer.finding_dispatch_dlq](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue_consumer) | resource |
 | [cloudflare_queue_consumer.osv_advisories](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue_consumer) | resource |
+| [cloudflare_queue_consumer.osv_advisories_dlq](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/queue_consumer) | resource |
 | [cloudflare_worker.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/worker) | resource |
 | [cloudflare_worker_version.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/worker_version) | resource |
 | [cloudflare_workers_cron_trigger.squawk](https://registry.terraform.io/providers/cloudflare/cloudflare/latest/docs/resources/workers_cron_trigger) | resource |
