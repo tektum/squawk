@@ -34,6 +34,22 @@ async function repositoryPath(
   return repositorySchema.parse(await response.json()).full_name;
 }
 
+/** Applies one retry policy to token, repository and workflow GitHub requests. */
+async function handleGitHubError(
+  database: D1Database,
+  deliveryId: string,
+  error: unknown,
+): Promise<false> {
+  if (!(error instanceof GitHubApiError)) throw error;
+  const retryable = error.status === 429 || error.status >= 500;
+  await database
+    .prepare("UPDATE dispatch_deliveries SET status=?,error=? WHERE delivery_id=?")
+    .bind(retryable ? "pending" : "failed", `GitHub ${error.status}`, deliveryId)
+    .run();
+  if (retryable) throw error;
+  return false;
+}
+
 /**
  * Dispatches one immutable claim. Before any GitHub request, a conditional D1 update
  * atomically takes a short processing lease, so concurrent at-least-once deliveries
@@ -102,13 +118,19 @@ export async function dispatchOne(
   }
 
   const apiUrl = env.GITHUB_API_URL ?? defaultGitHubApiUrl;
-  const token = await installationToken(
-    env,
-    { installationId: job.installation_id, repositoryId: job.repository_id },
-    now,
-    budget,
-  );
-  const repository = await repositoryPath(apiUrl, job.repository_id, token, budget);
+  let token: string;
+  let repository: string;
+  try {
+    token = await installationToken(
+      env,
+      { installationId: job.installation_id, repositoryId: job.repository_id },
+      now,
+      budget,
+    );
+    repository = await repositoryPath(apiUrl, job.repository_id, token, budget);
+  } catch (error) {
+    return handleGitHubError(env.DB, message.deliveryId, error);
+  }
   const platforms = job.platforms.split("\n").map((value) => {
     const [platform, image_ref] = value.split("|");
     return z.object({ platform: z.string(), image_ref: z.string() }).parse({ platform, image_ref });
@@ -143,14 +165,8 @@ export async function dispatchOne(
       signal: AbortSignal.timeout(10_000),
     },
   );
-  if (!response.ok) {
-    const retryable = response.status === 429 || response.status >= 500;
-    await env.DB.prepare("UPDATE dispatch_deliveries SET status=?,error=? WHERE delivery_id=?")
-      .bind(retryable ? "pending" : "failed", `GitHub ${response.status}`, message.deliveryId)
-      .run();
-    if (retryable) throw new GitHubApiError(response.status);
-    return false;
-  }
+  if (!response.ok)
+    return handleGitHubError(env.DB, message.deliveryId, new GitHubApiError(response.status));
   await env.DB.batch([
     env.DB.prepare(
       "UPDATE dispatch_deliveries SET status='accepted',error=NULL WHERE delivery_id=?",

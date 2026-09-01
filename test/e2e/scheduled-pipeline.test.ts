@@ -350,6 +350,24 @@ describe("durable multi-platform dispatch", () => {
     error.mockRestore();
   });
 
+  it("does not let a stale dead-letter message overwrite an accepted claim", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const producer = recordingQueue();
+    await enqueueDispatch({ DB: env.DB, FINDING_DISPATCH: producer.queue }, 1_000);
+    await env.DB.prepare("UPDATE dispatch_deliveries SET status='accepted'").run();
+
+    await drainQueue(
+      "squawk-finding-dispatch-dlq",
+      producer.sent.map((message) => message.body),
+      env,
+    );
+
+    await expect(
+      env.DB.prepare("SELECT status FROM dispatch_deliveries").first<string>("status"),
+    ).resolves.toBe("accepted");
+    error.mockRestore();
+  });
+
   it("cannot route a forged queue message without a D1 claim", async () => {
     const drained = await drainQueue(
       "squawk-finding-dispatch",
@@ -463,6 +481,37 @@ describe("durable multi-platform dispatch", () => {
     expect(producer.sent).toHaveLength(1);
   });
 
+  it("acks a permanent installation-token rejection instead of dead-lettering it", async () => {
+    const pair = await generateKeyPair("RS256", { extractable: true });
+    respond({
+      method: "POST",
+      url: "https://api.github.com/app/installations/123/access_tokens",
+      status: 401,
+      body: {},
+    });
+    const producer = recordingQueue();
+    const dispatchEnv = {
+      DB: env.DB,
+      GH_APP_ID: "42",
+      GH_APP_INSTALLATION_ID: "123",
+      GH_APP_PRIVATE_KEY: await exportPKCS8(pair.privateKey),
+      FINDING_DISPATCH: producer.queue,
+    };
+    await enqueueDispatch(dispatchEnv, 1_000);
+
+    const drained = await drainQueue(
+      "squawk-finding-dispatch",
+      producer.sent.map((message) => message.body),
+      dispatchEnv,
+    );
+
+    expect(drained).toEqual({ acked: 1, retried: 0 });
+    await expect(
+      env.DB.prepare(
+        "SELECT status || ':' || error AS result FROM dispatch_deliveries",
+      ).first<string>("result"),
+    ).resolves.toBe("failed:GitHub 401");
+  });
   it("isolates a failing ecosystem and advances a peer fairly through runScheduled", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await env.DB.batch([

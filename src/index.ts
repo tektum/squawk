@@ -51,7 +51,7 @@ async function recordDeadLetters(batch: MessageBatch, database: D1Database): Pro
       if (parsed.success)
         await database
           .prepare(
-            "UPDATE dispatch_deliveries SET status='failed',attempted_at=?,error='dead-letter queue' WHERE delivery_id=?",
+            "UPDATE dispatch_deliveries SET status='failed',attempted_at=?,error='dead-letter queue' WHERE delivery_id=? AND status='pending'",
           )
           .bind(Date.now(), parsed.data.deliveryId)
           .run();
