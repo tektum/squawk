@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sign } from "@octokit/webhooks-methods";
 import { exportPKCS8, generateKeyPair } from "jose";
 import { loadFixtures, type Origin, startOrigin } from "../test/e2e-local/origin";
 import { publishedPayload } from "../test/e2e-local/payload";
+import { checkImage, createReporter, printDiagnostics } from "../test/e2e-local/report";
 import {
   applyMigrations,
   bindAddress,
@@ -19,13 +20,7 @@ const installationId = "151159455";
 const repositoryId = "1316006990";
 const tenantId = "local-tenant";
 
-type Check = { readonly name: string; readonly ok: boolean; readonly detail: string };
-
-const checks: Check[] = [];
-function record(name: string, ok: boolean, detail: string): void {
-  checks.push({ name, ok, detail });
-  console.log(`${ok ? "  ok  " : " FAIL "} ${name}${detail ? ` - ${detail}` : ""}`);
-}
+const { checks, record } = createReporter();
 
 /**
  * Each run advances ingestion, backfill, advisory resolution and dispatch within one
@@ -62,14 +57,23 @@ async function drain(worker: LocalWorker, config: string, workspace: string): Pr
     );
     if (Number(outstanding?.remaining ?? 0) === 0) return run;
   }
-  return limit;
+  const [outstanding] = query<RemainingRow>(
+    config,
+    workspace,
+    `SELECT
+       (SELECT COUNT(*) FROM github_ingestion_jobs) +
+       (SELECT COUNT(*) FROM osv_advisory_jobs WHERE status<>'complete') +
+       (SELECT COUNT(*) FROM sboms WHERE backfill_status IN ('pending','running')) +
+       (SELECT COUNT(*) FROM findings WHERE dispatched_at IS NULL) AS remaining`,
+  );
+  throw new Error(
+    `scheduled work did not drain after ${limit} runs (${String(outstanding?.remaining)} remaining)`,
+  );
 }
 
 type Delivery = { readonly status: number; readonly body: string };
 type CountRow = { readonly count: number };
 type RunsRow = { readonly runs: number };
-type RemainingRow = { readonly remaining: number };
-type FindingRow = { readonly vuln_id: string };
 type ActivityRow = { readonly kind: string; readonly outcome: string; readonly count: number };
 type DispatchPayload = { readonly vuln_id?: string; readonly logical_image_ref?: string };
 
@@ -122,23 +126,19 @@ try {
   const pair = await generateKeyPair("RS256", { extractable: true });
   const privateKey = await exportPKCS8(pair.privateKey);
   const webhookSecret = crypto.randomUUID();
-  const envFile = join(workspace, "e2e.env");
-  writeFileSync(
-    envFile,
-    [
-      `GH_APP_ID=42`,
-      `GH_APP_INSTALLATION_ID=${installationId}`,
-      `GH_WEBHOOK_SECRET=${webhookSecret}`,
-      `GH_APP_PRIVATE_KEY=${JSON.stringify(privateKey)}`,
-    ].join("\n"),
-  );
+  const vars = {
+    GH_APP_ID: "42",
+    GH_APP_INSTALLATION_ID: installationId,
+    GH_WEBHOOK_SECRET: webhookSecret,
+    GH_APP_PRIVATE_KEY: privateKey,
+  };
   const config = writeLocalConfig(origin.url);
   applyMigrations(config, workspace);
 
   worker = await startWorker({
     config,
     persistTo: workspace,
-    envFile,
+    vars,
     hostname,
     port: await freePort(hostname),
   });
@@ -191,41 +191,8 @@ try {
   const runs = await drain(worker, config, workspace);
   console.log(`scheduled runs to quiescence: ${runs}`);
 
-  for (const scenario of ["vulnerable", "clean"] as const) {
-    const image = fixtures.images[scenario];
-    const sboms = query<CountRow>(
-      config,
-      workspace,
-      `SELECT COUNT(*) AS count FROM sboms WHERE logical_image_ref='${image.image}@${image.indexDigest}'`,
-    );
-    record(
-      `${scenario}: one SBOM per platform`,
-      sboms[0]?.count === image.platforms.length,
-      `${String(sboms[0]?.count)} of ${image.platforms.length}`,
-    );
-
-    const findings = query<FindingRow>(
-      config,
-      workspace,
-      `SELECT f.vuln_id AS vuln_id, c.package_name AS package_name, c.version AS version
-       FROM findings f JOIN components c ON c.id=f.component_id JOIN sboms s ON s.id=c.sbom_id
-       WHERE s.logical_image_ref='${image.image}@${image.indexDigest}'
-       GROUP BY f.vuln_id, c.package_name, c.version ORDER BY f.vuln_id`,
-    );
-    const found = new Set(findings.map((row) => row.vuln_id));
-    const expected = new Set(image.expectedFindings.map((finding) => finding.vulnId));
-    const missing = [...expected].filter((id) => !found.has(id));
-    const unexpected = [...found].filter((id) => !expected.has(id));
-    record(
-      `${scenario}: findings match the real advisories`,
-      missing.length === 0 && unexpected.length === 0,
-      expected.size === 0
-        ? `no findings expected, ${found.size} produced`
-        : `${found.size} of ${expected.size}${missing.length ? `, missing ${missing.join(",")}` : ""}${
-            unexpected.length ? `, unexpected ${unexpected.join(",")}` : ""
-          }`,
-    );
-  }
+  for (const scenario of ["vulnerable", "clean"] as const)
+    checkImage(scenario, fixtures.images[scenario], config, workspace, record);
 
   const vulnerable = fixtures.images.vulnerable;
   const dispatched = origin.dispatches.filter(
@@ -269,40 +236,7 @@ try {
       .map((row) => `${String(row["kind"])}/${String(row["outcome"])}=${String(row["count"])}`)
       .join(" "),
   );
-  if (checks.some((check) => !check.ok)) {
-    console.log("\n--- diagnostics ---");
-    for (const [label, sql] of [
-      [
-        "ingestion jobs",
-        "SELECT status, next_descriptor, saw_spdx, substr(logical_image_ref,1,60) AS image, error FROM github_ingestion_jobs",
-      ],
-      ["sboms", "SELECT platform, backfill_status, substr(image_ref,1,64) AS image_ref FROM sboms"],
-      [
-        "findings per package",
-        "SELECT c.package_name, c.version, COUNT(*) AS findings FROM findings f JOIN components c ON c.id=f.component_id GROUP BY 1,2 ORDER BY 1",
-      ],
-      ["advisory jobs", "SELECT status, COUNT(*) AS count FROM osv_advisory_jobs GROUP BY status"],
-      ["vulnerabilities", "SELECT id, package_name FROM vulnerabilities ORDER BY id"],
-      ["activity", "SELECT kind, outcome, COUNT(*) AS count FROM public_activity GROUP BY 1,2"],
-    ] as const) {
-      const rows = query(config, workspace, sql);
-      console.log(`${label}: ${rows.length === 0 ? "(none)" : ""}`);
-      for (const row of rows) console.log(`  ${JSON.stringify(row)}`);
-    }
-    console.log("\n--- origin requests ---");
-    for (const line of origin.requests.slice(0, 40)) console.log(`  ${line}`);
-    console.log("\n--- worker log tail ---");
-    const logText = await Bun.file(worker.logPath)
-      .text()
-      .catch(() => "");
-    console.log(
-      logText
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .slice(-25)
-        .join("\n"),
-    );
-  }
+  await printDiagnostics(checks, config, workspace, origin, worker);
 } finally {
   await worker?.stop();
   await origin?.stop();

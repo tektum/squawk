@@ -13,7 +13,8 @@ export type LocalWorker = {
 export type StartWorkerOptions = {
   readonly config: string;
   readonly persistTo: string;
-  readonly envFile: string;
+  /** Test-only bindings passed through Wrangler's in-memory --var interface. */
+  readonly vars: Readonly<Record<string, string>>;
   readonly hostname: string;
   readonly port: number;
 };
@@ -168,8 +169,7 @@ export async function startWorker(options: StartWorkerOptions): Promise<LocalWor
       "--local",
       "--persist-to",
       options.persistTo,
-      "--env-file",
-      options.envFile,
+      ...Object.entries(options.vars).flatMap(([name, value]) => ["--var", `${name}:${value}`]),
       "--ip",
       options.hostname,
       "--port",
@@ -186,7 +186,8 @@ export async function startWorker(options: StartWorkerOptions): Promise<LocalWor
   };
   void drain(child.stdout);
   void drain(child.stderr);
-  const url = `http://${options.hostname}:${options.port}`;
+  const host = options.hostname.includes(":") ? `[${options.hostname}]` : options.hostname;
+  const url = `http://${host}:${options.port}`;
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     try {
