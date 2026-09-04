@@ -27,7 +27,7 @@
     "build:admin": "bun scripts/build-admin.ts"
   },
   "dependencies": {
-    "@descope/node-sdk": "2.15.0",
+    "@descope/node-sdk": "2.16.0",
     "hono": "4.13.5",
     "jose": "6.2.10",
     "zod": "4.5.4"
