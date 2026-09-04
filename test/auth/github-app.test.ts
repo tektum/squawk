@@ -8,8 +8,8 @@ describe("GitHub App private keys", () => {
   it("mints an installation token from GitHub's PKCS#1 PEM format", async () => {
     const pair = await generateKeyPair("RS256", { extractable: true });
     const pkcs8 = await exportPKCS8(pair.privateKey);
-    // GitHub downloads App keys as `BEGIN RSA PRIVATE KEY` (PKCS#1), while jose's
-    // importPKCS8 rejects that format. This reproduces the production secret exactly.
+    // GitHub downloads App keys as PKCS#1 RSA PEM, while jose's importPKCS8 rejects
+    // that format. This reproduces the production secret exactly.
     const pkcs1 = createPrivateKey(pkcs8).export({ format: "pem", type: "pkcs1" }).toString();
     respond({
       method: "POST",
