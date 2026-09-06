@@ -39,7 +39,7 @@
     "@octokit/webhooks-methods": "6.0.0",
     "@types/node": "26.4.1",
     "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.5",
+    "@types/react-dom": "19.2.7",
     "bun-types": "1.4.0",
     "msw": "2.15.0",
     "react": "19.2.8",
