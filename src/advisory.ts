@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ecosystemFamily } from "./advisory-jobs";
 import { describeError } from "./error-detail";
 import { compareVersion } from "./osv/comparator";
 
@@ -109,33 +110,60 @@ export async function resolveAdvisory(options: {
   );
   if (!response.ok) throw new Error(`OSV advisory failed (${response.status})`);
   const advisory = advisorySchema.parse(await response.json());
-  for (const affected of advisory.affected.filter(
-    (entry) => entry.package.ecosystem.split(":")[0] === options.ecosystem,
+  const affected = advisory.affected.filter(
+    (entry) => ecosystemFamily(entry.package.ecosystem) === options.ecosystem,
+  );
+  const current = new Set(
+    affected.map((entry) => `${entry.package.ecosystem}\u0000${entry.package.name}`),
+  );
+  const stored = await options.database
+    .prepare(
+      "SELECT ecosystem,package_name FROM vulnerabilities WHERE id=? AND (ecosystem=? OR ecosystem LIKE ?)",
+    )
+    .bind(advisory.id, options.ecosystem, `${options.ecosystem}:%`)
+    .all<{ readonly ecosystem: string; readonly package_name: string }>();
+  for (const withdrawn of stored.results.filter(
+    (row) => !current.has(`${row.ecosystem}\u0000${row.package_name}`),
   ))
-    await persistAffected(options.database, options.ecosystem, advisory, affected, options.now);
+    await options.database.batch([
+      options.database
+        .prepare(
+          "DELETE FROM findings WHERE vuln_id=? AND component_id IN (SELECT id FROM components WHERE ecosystem=? AND package_name=?)",
+        )
+        .bind(advisory.id, withdrawn.ecosystem, withdrawn.package_name),
+      options.database
+        .prepare(
+          "DELETE FROM matching_errors WHERE vuln_id=? AND component_id IN (SELECT id FROM components WHERE ecosystem=? AND package_name=?)",
+        )
+        .bind(advisory.id, withdrawn.ecosystem, withdrawn.package_name),
+      options.database
+        .prepare("DELETE FROM vulnerabilities WHERE id=? AND ecosystem=? AND package_name=?")
+        .bind(advisory.id, withdrawn.ecosystem, withdrawn.package_name),
+    ]);
+  for (const entry of affected)
+    await persistAffected(options.database, advisory, entry, options.now);
 }
 
 /**
  * Persists an advisory's affected package data and records matching components.
  *
- * @param ecosystem - The package ecosystem associated with the advisory
  * @param advisory - The advisory metadata to persist
  * @param affected - The affected package, ranges, and versions to evaluate
  * @param now - The timestamp for new findings and matching errors
  */
 async function persistAffected(
   database: D1Database,
-  ecosystem: string,
   advisory: z.infer<typeof advisorySchema>,
   affected: z.infer<typeof advisorySchema>["affected"][number],
   now: number,
 ): Promise<void> {
+  const affectedEcosystem = affected.package.ecosystem;
   const components = (
     await database
       .prepare(
-        "SELECT c.id,s.org_id,c.version FROM components c JOIN sboms s ON s.id=c.sbom_id AND s.retired_at IS NULL WHERE c.matchable=1 AND c.package_name=? AND (c.ecosystem=? OR c.ecosystem LIKE ?)",
+        "SELECT c.id,s.org_id,c.version FROM components c JOIN sboms s ON s.id=c.sbom_id AND s.retired_at IS NULL WHERE c.matchable=1 AND c.package_name=? AND c.ecosystem=?",
       )
-      .bind(affected.package.name, ecosystem, `${ecosystem}:%`)
+      .bind(affected.package.name, affectedEcosystem)
       .all()
   ).results.map((component) => componentSchema.parse(component));
   if (components.length === 0) return;
@@ -146,7 +174,7 @@ async function persistAffected(
       )
       .bind(
         advisory.id,
-        ecosystem,
+        affectedEcosystem,
         affected.package.name,
         JSON.stringify({ ranges: affected.ranges, versions: affected.versions }),
         advisory.severity?.[0]?.score ?? null,
@@ -156,7 +184,7 @@ async function persistAffected(
   ];
   for (const component of components) {
     const comparison = await compareVersion({
-      ecosystem,
+      ecosystem: ecosystemFamily(affectedEcosystem),
       version: component.version,
       ranges: affected.ranges,
       versions: affected.versions,
@@ -166,15 +194,31 @@ async function persistAffected(
         database
           .prepare("INSERT OR IGNORE INTO findings VALUES (?,?,?,?,NULL)")
           .bind(component.org_id, component.id, advisory.id, now),
+        database
+          .prepare("DELETE FROM matching_errors WHERE component_id=? AND vuln_id=?")
+          .bind(component.id, advisory.id),
       );
-    if (comparison.kind === "unsupported" || comparison.kind === "error")
+    else {
       statements.push(
         database
-          .prepare(
-            "INSERT INTO matching_errors (component_id,vuln_id,reason,created_at) VALUES (?,?,?,?) ON CONFLICT(component_id,vuln_id) DO UPDATE SET reason=excluded.reason,created_at=excluded.created_at",
-          )
-          .bind(component.id, advisory.id, comparison.reason, now),
+          .prepare("DELETE FROM findings WHERE component_id=? AND vuln_id=?")
+          .bind(component.id, advisory.id),
       );
+      if (comparison.kind === "unsupported" || comparison.kind === "error")
+        statements.push(
+          database
+            .prepare(
+              "INSERT INTO matching_errors (component_id,vuln_id,reason,created_at) VALUES (?,?,?,?) ON CONFLICT(component_id,vuln_id) DO UPDATE SET reason=excluded.reason,created_at=excluded.created_at",
+            )
+            .bind(component.id, advisory.id, comparison.reason, now),
+        );
+      else
+        statements.push(
+          database
+            .prepare("DELETE FROM matching_errors WHERE component_id=? AND vuln_id=?")
+            .bind(component.id, advisory.id),
+        );
+    }
   }
   await database.batch(statements);
 }

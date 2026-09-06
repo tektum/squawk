@@ -123,6 +123,21 @@ async function buildRegistry(fixtures: LoadedFixtures): Promise<Registry> {
       });
     }
     manifests.set(
+      `${imagePath}/${image.indexDigest}`,
+      jsonBytes({
+        schemaVersion: 2,
+        mediaType: indexMediaType,
+        manifests: image.platforms.map((platform) => ({
+          digest: platform.manifestDigest,
+          mediaType: manifestMediaType,
+          platform: {
+            os: platform.platform.split("/")[0],
+            architecture: platform.platform.split("/")[1],
+          },
+        })),
+      }),
+    );
+    manifests.set(
       `${imagePath}/sha256-${image.indexDigest.slice(7)}`,
       jsonBytes({ schemaVersion: 2, mediaType: indexMediaType, manifests: descriptors }),
     );

@@ -10,6 +10,16 @@ const descriptorSchema = z.object({
   mediaType: z.string().min(1),
 });
 const indexSchema = z.object({ manifests: z.array(descriptorSchema).max(500) });
+const subjectIndexSchema = z.object({
+  mediaType: z.literal("application/vnd.oci.image.index.v1+json"),
+  manifests: z
+    .array(
+      descriptorSchema.extend({
+        platform: z.object({ os: z.string(), architecture: z.string() }),
+      }),
+    )
+    .max(500),
+});
 const artifactManifestSchema = z.object({
   artifactType: z.literal(bundleMediaType),
   layers: z
@@ -27,7 +37,13 @@ const bundleSchema = z.object({
 });
 const tokenSchema = z.object({ token: z.string().min(1) });
 
-async function registryJson(url: URL, token: string, accept: string, budget?: SubrequestBudget) {
+async function registryJson(
+  url: URL,
+  token: string,
+  accept: string,
+  budget?: SubrequestBudget,
+  expectedDigest?: string,
+) {
   budget?.take();
   const response = await fetch(url, {
     headers: { accept, authorization: `Bearer ${token}` },
@@ -35,7 +51,16 @@ async function registryJson(url: URL, token: string, accept: string, budget?: Su
   });
   if (response.status === 404) return null;
   if (!response.ok) throw new WebhookError(502, `registry failed (${response.status})`);
-  return response.json();
+  const bytes = await response.arrayBuffer();
+  if (expectedDigest) {
+    const digest = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
+    if (`sha256:${digest}` !== expectedDigest)
+      throw new WebhookError(409, "subject index digest mismatch");
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
 }
 
 export const defaultGhcrUrl = "https://ghcr.io";
@@ -51,6 +76,7 @@ export async function statementsForImage(
   readonly nextDescriptor: number;
   readonly sawStatement: boolean;
   readonly statements: readonly z.infer<typeof statementSchema>[];
+  readonly platforms: ReadonlyMap<"linux/amd64" | "linux/arm64", string>;
 }> {
   const imagePath = image.slice("ghcr.io/".length);
   const tokenUrl = new URL(`${ghcrUrl}/token`);
@@ -61,6 +87,32 @@ export async function statementsForImage(
   if (!tokenResponse.ok) throw new WebhookError(502, "registry token unavailable");
   const { token } = tokenSchema.parse(await tokenResponse.json());
   const base = `${ghcrUrl}/v2/${imagePath}`;
+  const subjectIndex = subjectIndexSchema.parse(
+    await registryJson(
+      new URL(`${base}/manifests/${digest}`),
+      token,
+      "application/vnd.oci.image.index.v1+json",
+      budget,
+      ghcrUrl === defaultGhcrUrl ? digest : undefined,
+    ),
+  );
+  const platforms = new Map<"linux/amd64" | "linux/arm64", string>();
+  for (const descriptor of subjectIndex.manifests) {
+    const architecture =
+      descriptor.platform.architecture === "x86_64"
+        ? "amd64"
+        : descriptor.platform.architecture === "aarch64"
+          ? "arm64"
+          : descriptor.platform.architecture;
+    if (
+      descriptor.platform.os !== "linux" ||
+      (architecture !== "amd64" && architecture !== "arm64")
+    )
+      continue;
+    const platform = `linux/${architecture}` as const;
+    if (platforms.has(platform)) throw new WebhookError(409, "conflicting platform descriptors");
+    platforms.set(platform, descriptor.digest);
+  }
   const rawIndex = await registryJson(
     new URL(`${base}/manifests/sha256-${digest.slice("sha256:".length)}`),
     token,
@@ -73,6 +125,7 @@ export async function statementsForImage(
       nextDescriptor: startDescriptor,
       sawStatement: false,
       statements: [],
+      platforms,
     };
   const descriptors = indexSchema
     .parse(rawIndex)
@@ -134,6 +187,7 @@ export async function statementsForImage(
     complete: nextDescriptor >= descriptors.length,
     nextDescriptor,
     sawStatement,
+    platforms,
     statements,
   };
 }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AdvisoryMessage } from "./advisory";
 import { registerAdvisoryJobs } from "./advisory-jobs";
+import { sha256 } from "./digest";
 
 const cursorSchema = z.object({ last_synced_at: z.string(), boundary_ids: z.string() });
 const feedRowSchema = z.object({ modified: z.string().datetime(), id: z.string().min(1) });
@@ -14,6 +15,7 @@ export type DiscoveryOptions = {
   readonly osvBaseUrl: string;
   readonly queue: QueueSender;
   readonly maxChunks?: number;
+  readonly now?: number;
 };
 
 /**
@@ -36,14 +38,16 @@ export async function discoverAdvisories(options: DiscoveryOptions): Promise<num
   );
   if (!response.ok) throw new Error(`OSV modified feed failed (${response.status})`);
   const boundary = new Set(cursor.boundary_ids.split(",").filter(Boolean));
-  const rows = (await response.text())
+  const feedRows = (await response.text())
     .trim()
     .split("\n")
-    .slice(1)
     .map((line) => {
       const [modified, id] = line.split(",");
-      return feedRowSchema.parse({ modified: modified?.trim(), id: id?.trim() });
+      return feedRowSchema.safeParse({ modified: modified?.trim(), id: id?.trim() });
     })
+    .flatMap((parsed) => (parsed.success ? [parsed.data] : []));
+  if (feedRows.length === 0) throw new Error("OSV modified feed was empty");
+  const rows = feedRows
     .filter(
       (row) =>
         row.modified > cursor.last_synced_at ||
@@ -55,6 +59,24 @@ export async function discoverAdvisories(options: DiscoveryOptions): Promise<num
     );
   const maxRows = (options.maxChunks ?? 10) * 100;
   const selected = rows.slice(0, maxRows);
+  const maximum = feedRows.reduce(
+    (current, row) => (row.modified > current ? row.modified : current),
+    cursor.last_synced_at,
+  );
+  const checkedAt = options.now ?? Date.now();
+  const checkpointId = await sha256(
+    [options.ecosystem, maximum, checkedAt.toString()].join("\u0000"),
+  );
+  await options.database
+    .prepare(
+      `INSERT INTO advisory_feed_checks
+       (checkpoint_id,ecosystem,cursor_modified_at,checked_at,discovery_complete,status)
+       VALUES (?,?,?,?,0,'pending')
+       ON CONFLICT(checkpoint_id) DO UPDATE SET discovery_complete=0,status='pending',
+         completed_at=NULL,error=NULL`,
+    )
+    .bind(checkpointId, options.ecosystem, maximum, checkedAt)
+    .run();
   for (let offset = 0; offset < selected.length; offset += 100) {
     const chunk = selected.slice(offset, offset + 100);
     const registered = await registerAdvisoryJobs(
@@ -67,6 +89,16 @@ export async function discoverAdvisories(options: DiscoveryOptions): Promise<num
     );
     await options.queue.sendBatch(registered.map(({ jobId }) => ({ body: { jobId } })));
     await checkpoint(options.database, options.ecosystem, cursor, rows, offset + chunk.length);
+  }
+  if (selected.length === rows.length) {
+    await options.database
+      .prepare(
+        `UPDATE advisory_feed_checks SET discovery_complete=1
+         WHERE checkpoint_id=? AND status='pending'`,
+      )
+      .bind(checkpointId)
+      .run();
+    await refreshFeedChecks(options.database, checkedAt);
   }
   return selected.length;
 }
@@ -93,6 +125,21 @@ async function checkpoint(
       "UPDATE sync_cursors SET last_synced_at=?,boundary_ids=?,continuation_id=? WHERE ecosystem=?",
     )
     .bind(last.modified, [...new Set(ids)].join(","), rows[count] ? last.id : null, ecosystem)
+    .run();
+}
+
+export async function refreshFeedChecks(database: D1Database, now = Date.now()): Promise<void> {
+  await database
+    .prepare(
+      `UPDATE advisory_feed_checks SET status='complete',completed_at=?,error=NULL
+       WHERE status='pending' AND discovery_complete=1 AND NOT EXISTS (
+         SELECT 1 FROM osv_advisory_jobs j
+         WHERE j.ecosystem=advisory_feed_checks.ecosystem
+           AND j.modified_at<=advisory_feed_checks.cursor_modified_at
+           AND j.status!='complete'
+       )`,
+    )
+    .bind(now)
     .run();
 }
 

@@ -20,13 +20,14 @@ function quote(value: string) {
 /**
  * Builds SQL statements to reconcile stored component metadata and requeue live SBOMs for backfill.
  *
- * The requeue statement is part of every plan, never conditional on the update count: a previous run
- * may have restated components and then failed before requeueing, and repeating the reset is
- * harmless. Findings and vulnerabilities are derived from the restated ecosystem and version, so
- * they are rebuilt too.
+ * The requeue statement is part of every plan, including no-op reparses.
+ * Each changed component is repaired before its identity update: stale findings,
+ * matching errors, and undelivered claims are removed, then its live SBOM is requeued.
+ * The final requeue is intentionally non-destructive to unrelated findings and makes
+ * reruns safe after an interrupted operator session.
  *
  * @param components - Stored components whose ecosystem, matchability, and version values should be reconciled
- * @returns The component update statements and unconditional cleanup and SBOM requeue statement
+ * @returns Targeted component repair statements and the idempotent live-SBOM requeue statement
  */
 export function reconciliationPlan(components: readonly StoredComponent[]): {
   readonly updates: readonly string[];
@@ -43,15 +44,26 @@ export function reconciliationPlan(components: readonly StoredComponent[]): {
       version === component.version
     )
       continue;
-    updates.push(
-      `UPDATE components SET ecosystem=${quote(resolved.ecosystem)},matchable=${matchable},version=${quote(version)} WHERE id=${component.id};`,
-    );
+    updates.push(`DELETE FROM dispatch_deliveries WHERE status IN ('pending','failed') AND ecosystem=${quote(component.ecosystem)} AND version=${quote(component.version)} AND package_name=(SELECT package_name FROM components WHERE id=${component.id}) AND logical_image_ref=(SELECT s.logical_image_ref FROM components c JOIN sboms s ON s.id=c.sbom_id WHERE c.id=${component.id});
+DELETE FROM findings WHERE component_id=${component.id};
+DELETE FROM matching_errors WHERE component_id=${component.id};
+UPDATE sboms SET backfill_status='pending',backfill_error=NULL WHERE retired_at IS NULL AND id=(SELECT sbom_id FROM components WHERE id=${component.id});
+UPDATE components SET ecosystem=${quote(resolved.ecosystem)},matchable=${matchable},version=${quote(version)} WHERE id=${component.id};`);
   }
   return {
     updates,
-    requeue: `DELETE FROM findings;
-DELETE FROM vulnerabilities;
-DELETE FROM matching_errors;
+    requeue: `DELETE FROM findings
+WHERE NOT EXISTS (
+  SELECT 1 FROM components c JOIN vulnerabilities v
+    ON v.id=findings.vuln_id AND v.ecosystem=c.ecosystem AND v.package_name=c.package_name
+  WHERE c.id=findings.component_id
+);
+DELETE FROM matching_errors
+WHERE NOT EXISTS (
+  SELECT 1 FROM components c JOIN vulnerabilities v
+    ON v.id=matching_errors.vuln_id AND v.ecosystem=c.ecosystem AND v.package_name=c.package_name
+  WHERE c.id=matching_errors.component_id
+);
 UPDATE sboms SET backfill_status='pending',backfill_error=NULL WHERE retired_at IS NULL;`,
   };
 }

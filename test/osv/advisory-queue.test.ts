@@ -2,7 +2,7 @@ import { createExecutionContext, createMessageBatch, env, getQueueResult } from 
 import { beforeEach, describe, expect, it } from "vitest";
 import { sha256 } from "../../src/digest";
 import worker from "../../src/index";
-import { discoverAdvisories, requeueAdvisoryJobs } from "../../src/sync";
+import { discoverAdvisories, refreshFeedChecks, requeueAdvisoryJobs } from "../../src/sync";
 import { respond } from "../http";
 
 const modifiedAt = "2026-01-02T00:00:00Z";
@@ -31,6 +31,11 @@ describe("OSV advisory queue", () => {
   });
 
   it("checkpoints bounded digest batches and normalizes CRLF", async () => {
+    await env.DB.prepare(
+      "INSERT INTO advisory_feed_checks (checkpoint_id,ecosystem,cursor_modified_at,checked_at,completed_at,discovery_complete,status) VALUES (?,'npm','2026-01-01T00:00:00Z',0,0,1,'complete')",
+    )
+      .bind("8".repeat(64))
+      .run();
     const rows = Array.from(
       { length: 205 },
       (_, index) => `${modifiedAt},OSV-${String(index).padStart(3, "0")}\r`,
@@ -67,6 +72,12 @@ describe("OSV advisory queue", () => {
         "continuation_id",
       ),
     ).resolves.toBe("OSV-199");
+    await expect(
+      env.DB.prepare(
+        `SELECT status || ':' || discovery_complete FROM advisory_feed_checks
+         ORDER BY checked_at DESC,checkpoint_id DESC LIMIT 1`,
+      ).first("status || ':' || discovery_complete"),
+    ).resolves.toBe("pending:0");
   });
 
   it("leaves the cursor at the last successfully enqueued chunk", async () => {
@@ -98,6 +109,37 @@ describe("OSV advisory queue", () => {
         "continuation_id",
       ),
     ).resolves.toBe("OSV-099");
+    await expect(
+      env.DB.prepare("SELECT status || ':' || discovery_complete FROM advisory_feed_checks").first(
+        "status || ':' || discovery_complete",
+      ),
+    ).resolves.toBe("pending:0");
+  });
+
+  it("completes a feed check only after every discovered advisory job", async () => {
+    respond({
+      url: "https://osv.test/npm/modified_id.csv",
+      status: 200,
+      text: `${modifiedAt},OSV-1\n`,
+    });
+    await discoverAdvisories({
+      database: env.DB,
+      ecosystem: "npm",
+      osvBaseUrl: "https://osv.test",
+      now: 1_000,
+      queue: { sendBatch: async () => undefined },
+    });
+    await expect(
+      env.DB.prepare("SELECT status FROM advisory_feed_checks").first("status"),
+    ).resolves.toBe("pending");
+
+    await env.DB.prepare("UPDATE osv_advisory_jobs SET status='complete'").run();
+    await refreshFeedChecks(env.DB, 2_000);
+    await expect(
+      env.DB.prepare(
+        "SELECT status || ':' || checked_at || ':' || completed_at FROM advisory_feed_checks",
+      ).first("status || ':' || checked_at || ':' || completed_at"),
+    ).resolves.toBe("complete:1000:2000");
   });
 
   it("acknowledges an idempotent successful advisory", async () => {
