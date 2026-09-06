@@ -1,37 +1,39 @@
 import { z } from "zod";
 import type { SubrequestBudget } from "./budget";
 import { type DispatchEnv, type DispatchMessage, dispatchRowSchema } from "./dispatch";
-import { defaultGitHubApiUrl, GitHubApiError, installationToken } from "./github";
+import { defaultGitHubApiUrl, GitHubApiError, installationToken, repositoryPath } from "./github";
+import { dispatchReconciliation } from "./reconciliation-dispatch";
 
-const repositorySchema = z.object({ full_name: z.string().regex(/^[^/]+\/[^/]+$/) });
+const platformEntrySchema = z.object({
+  platform: z.enum(["linux/amd64", "linux/arm64"]),
+  image_ref: z.string().regex(/@sha256:[a-f0-9]{64}$/),
+});
+
+function dispatchPlatforms(value: string) {
+  const identities = new Map<string, string>();
+  for (const encoded of value.split(",")) {
+    const separator = encoded.indexOf("|");
+    const parsed = platformEntrySchema.parse({
+      platform: encoded.slice(0, separator),
+      image_ref: encoded.slice(separator + 1),
+    });
+    const existing = identities.get(parsed.platform);
+    if (existing && existing !== parsed.image_ref) throw new Error("conflicting platform identity");
+    identities.set(parsed.platform, parsed.image_ref);
+  }
+  return [...identities]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([platform, image_ref]) => platformEntrySchema.parse({ platform, image_ref }));
+}
 /** Queue retry_delay is 30s; a 20s lease permits the retry but blocks concurrent delivery. */
 const attemptLeaseMilliseconds = 20_000;
 
 export class DispatchClaimBusy extends Error {
   readonly name = "DispatchClaimBusy";
+
   constructor() {
     super("dispatch claim is already being processed");
   }
-}
-
-async function repositoryPath(
-  apiUrl: string,
-  repositoryId: string,
-  token: string,
-  budget?: SubrequestBudget,
-): Promise<string> {
-  budget?.take();
-  const response = await fetch(`${apiUrl}/repositories/${repositoryId}`, {
-    headers: {
-      authorization: `Bearer ${token}`,
-      accept: "application/vnd.github+json",
-      "user-agent": "squawk",
-      "x-github-api-version": "2026-03-10",
-    },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new GitHubApiError(response.status);
-  return repositorySchema.parse(await response.json()).full_name;
 }
 
 /** Applies one retry policy to token, repository and workflow GitHub requests. */
@@ -64,6 +66,8 @@ export async function dispatchOne(
   now = Date.now(),
   budget?: SubrequestBudget,
 ): Promise<boolean> {
+  const reconciliation = await dispatchReconciliation(env, message, now);
+  if (reconciliation !== null) return reconciliation;
   const claim = await env.DB.prepare("SELECT status FROM dispatch_deliveries WHERE delivery_id=?")
     .bind(message.deliveryId)
     .first<{ readonly status: "pending" | "accepted" | "failed" }>();
@@ -83,7 +87,7 @@ export async function dispatchOne(
     await env.DB.prepare(`SELECT d.org_id, d.logical_image_ref, d.package_name, d.ecosystem,
     d.version, d.vuln_id, v.severity, s.installation_id, s.repository_id,
     src.dispatch_workflow, src.dispatch_ref,
-    GROUP_CONCAT(s.platform || '|' || s.image_ref, char(10)) AS platforms
+    GROUP_CONCAT(DISTINCT s.platform || '|' || s.image_ref) AS platforms
     FROM dispatch_deliveries d
     JOIN findings f ON f.org_id=d.org_id AND f.vuln_id=d.vuln_id AND f.dispatched_at IS NULL
     JOIN components c ON c.id=f.component_id AND c.package_name=d.package_name
@@ -94,7 +98,8 @@ export async function dispatchOne(
       AND v.package_name=d.package_name
     LEFT JOIN github_sources src ON src.installation_id=s.installation_id
       AND src.repository_id=s.repository_id
-    WHERE d.delivery_id=? AND NOT EXISTS (SELECT 1 FROM vex_statements x
+    WHERE d.delivery_id=? AND src.dispatch_schema_version=1
+      AND NOT EXISTS (SELECT 1 FROM vex_statements x
       WHERE x.id=(SELECT id FROM vex_statements WHERE org_id=d.org_id
         AND package_name=d.package_name AND ecosystem=d.ecosystem AND vuln_id=d.vuln_id
         ORDER BY created_at DESC,id DESC LIMIT 1) AND x.status IN ('not_affected','fixed'))
@@ -131,10 +136,17 @@ export async function dispatchOne(
   } catch (error) {
     return handleGitHubError(env.DB, message.deliveryId, error);
   }
-  const platforms = job.platforms.split("\n").map((value) => {
-    const [platform, image_ref] = value.split("|");
-    return z.object({ platform: z.string(), image_ref: z.string() }).parse({ platform, image_ref });
-  });
+  let platforms: z.infer<typeof platformEntrySchema>[];
+  try {
+    platforms = dispatchPlatforms(job.platforms);
+  } catch {
+    await env.DB.prepare(
+      "UPDATE dispatch_deliveries SET status='failed',error='conflicting platform identity' WHERE delivery_id=?",
+    )
+      .bind(message.deliveryId)
+      .run();
+    return false;
+  }
   budget?.take();
   const response = await fetch(
     `${apiUrl}/repos/${repository}/actions/workflows/${job.dispatch_workflow}/dispatches`,

@@ -1,9 +1,11 @@
+import { assertPersistedPlatforms, reconcilePlatformRequests } from "./attested-platforms";
 import { backfillSbom } from "./backfill";
 import type { SubrequestBudget } from "./budget";
 import { sha256 } from "./digest";
 import { TenantIdSchema } from "./domain";
 import { statementsForImage } from "./registry-attestation";
 import { ingestSboms } from "./repository";
+import { refreshReconciliationImage } from "./reconciliation-state";
 import { imageIdentityFromPredicate, parsePredicate, sbomInputSchema } from "./sbom";
 import type { WebhookEnv } from "./webhook-contract";
 import { WebhookError } from "./webhook-contract";
@@ -33,6 +35,15 @@ export async function enqueueIngestion(env: WebhookEnv, job: IngestionJob, now =
       now,
     )
     .run();
+  await refreshReconciliationImage(
+    env.DB,
+    {
+      installation_id: job.installationId,
+      repository_id: job.repositoryId,
+      logical_image_ref: `${job.image}@${job.subjectDigest}`,
+    },
+    now,
+  );
 }
 /**
  * Records an accepted ingestion delivery and removes the corresponding ingestion job.
@@ -144,8 +155,10 @@ export async function ingestPendingImage(
     statements.map(async (statement) => {
       const identity = imageIdentityFromPredicate(statement.predicate);
       if (!identity) return null;
+      const imageDigest = registry.platforms.get(identity.platform);
+      if (!imageDigest) throw new WebhookError(409, "platform missing from subject index");
       const input = sbomInputSchema.parse({
-        image_ref: `${job.image}@${identity.imageDigest}`,
+        image_ref: `${job.image}@${imageDigest}`,
         logical_image_ref: `${job.image}@${job.subjectDigest}`,
         platform: identity.platform,
         idempotency_key: `${job.subjectDigest}:${identity.platform}`,
@@ -182,19 +195,38 @@ export async function ingestPendingImage(
       .run();
     return "ignored" as const;
   }
-  const uniqueRequests = platformRequests.filter(
-    (request, index) =>
-      platformRequests.findIndex(
-        (candidate) =>
-          candidate.input.image_ref === request.input.image_ref &&
-          candidate.input.platform === request.input.platform,
-      ) === index,
+  const logicalImageRef = `${job.image}@${job.subjectDigest}`;
+  const uniqueRequests = await reconcilePlatformRequests(
+    env.DB,
+    source.org_id,
+    logicalImageRef,
+    platformRequests,
   );
   const result = await ingestSboms(env.DB, TenantIdSchema.parse(source.org_id), uniqueRequests, {
     installationId: job.installationId,
     repositoryId: job.repositoryId,
   });
   if (result.kind === "conflict") throw new WebhookError(409, "conflicting platform submission");
+  if (registry.complete)
+    await assertPersistedPlatforms(
+      env.DB,
+      source.org_id,
+      logicalImageRef,
+      job.image,
+      registry.platforms,
+    );
+  const backfills = result.createdSbomIds.map((sbomId) =>
+    backfillSbom({
+      database: env.DB,
+      sbomId,
+      osvApiUrl: env.OSV_API_URL,
+      osvBaseUrl: env.OSV_BASE_URL,
+      ...(budget ? { budget } : {}),
+    }),
+  );
+  if (env.EXECUTION_CONTEXT)
+    for (const backfill of backfills) env.EXECUTION_CONTEXT.waitUntil(backfill);
+  else await Promise.all(backfills);
   if (!registry.complete) {
     await env.DB.prepare(
       "UPDATE github_ingestion_jobs SET next_descriptor=?,saw_spdx=?,status='pending',attempted_at=?,error=NULL WHERE installation_id=? AND repository_id=? AND subject_digest=?",
@@ -208,19 +240,8 @@ export async function ingestPendingImage(
         job.subjectDigest,
       )
       .run();
+    return "pending" as const;
   }
   await finishIngestion(env, job, source.org_id, now);
-  const backfills = result.createdSbomIds.map((sbomId) =>
-    backfillSbom({
-      database: env.DB,
-      sbomId,
-      osvApiUrl: env.OSV_API_URL,
-      osvBaseUrl: env.OSV_BASE_URL,
-      ...(budget ? { budget } : {}),
-    }),
-  );
-  if (env.EXECUTION_CONTEXT)
-    for (const backfill of backfills) env.EXECUTION_CONTEXT.waitUntil(backfill);
-  else await Promise.all(backfills);
   return "complete" as const;
 }

@@ -141,6 +141,7 @@ describe("GitHub registry package webhook", () => {
     "repository",
     "predicate",
     "subject",
+    "index-digest",
   ] satisfies readonly FailureCase[])("fails closed for a wrong %s", async (failure) => {
     const fixture = await githubWebhookFixture(failure);
     const response = await worker.fetch(

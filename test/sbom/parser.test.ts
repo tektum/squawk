@@ -2,16 +2,20 @@ import { describe, expect, it } from "vitest";
 import { imageIdentityFromPredicate, parsePredicate } from "../../src/sbom";
 
 describe("SBOM predicate parser", () => {
-  it("derives identity from a Syft container package without documentDescribes", () => {
+  it("derives platform from attested runtime package architecture", () => {
     expect(
       imageIdentityFromPredicate({
         spdxVersion: "SPDX-2.3",
         packages: [
           {
-            name: "busybox",
-            versionInfo: "1.38.0",
+            name: "libc6",
+            versionInfo: "2.39-0ubuntu8",
             externalRefs: [
-              { referenceType: "purl", referenceLocator: "pkg:generic/busybox@1.38.0" },
+              {
+                referenceType: "purl",
+                referenceLocator:
+                  "pkg:deb/ubuntu/libc6@2.39-0ubuntu8?arch=amd64&distro=ubuntu-24.04",
+              },
             ],
           },
           {
@@ -28,7 +32,7 @@ describe("SBOM predicate parser", () => {
           },
         ],
       }),
-    ).toEqual({ imageDigest: `sha256:${"a".repeat(64)}`, platform: "linux/amd64" });
+    ).toEqual({ platform: "linux/amd64" });
   });
 
   it("does not derive a platform identity from an index SPDX document", () => {
@@ -58,7 +62,11 @@ describe("SBOM predicate parser", () => {
     const components = parsePredicate({
       bomFormat: "CycloneDX",
       components: [
-        { name: "openssl", version: "3.0.0", purl: "pkg:deb/debian/openssl@3.0.0" },
+        {
+          name: "openssl",
+          version: "3.0.0",
+          purl: "pkg:deb/debian/openssl@3.0.0?distro=debian-12",
+        },
         { name: "hono", version: "4.0.0", purl: "pkg:npm/hono@4.0.0" },
         { name: "zod", version: "4.0.0", purl: "pkg:pypi/zod@4.0.0" },
         { name: "demo", version: "1.0.0", purl: "pkg:maven/org.example/demo@1.0.0" },
@@ -68,7 +76,7 @@ describe("SBOM predicate parser", () => {
     });
 
     expect(components.map((component) => component.ecosystem)).toEqual([
-      "Debian",
+      "Debian:12",
       "npm",
       "PyPI",
       "Maven",
@@ -144,7 +152,68 @@ describe("SBOM predicate parser", () => {
       ],
     });
 
-    expect(components.map((component) => component.ecosystem)).toEqual(["Debian:12", "Debian"]);
+    expect(components.map((component) => component.ecosystem)).toEqual(["Debian:12", "Debian:13"]);
+  });
+
+  it("keeps Ubuntu and unknown deb distributions out of Debian", () => {
+    const components = parsePredicate({
+      bomFormat: "CycloneDX",
+      components: [
+        {
+          name: "openssl",
+          version: "3.0.13-0ubuntu3.15",
+          purl: "pkg:deb/%75buntu/openssl@3.0.13-0ubuntu3.15?arch=amd64&distro=ubuntu%2D24.04",
+        },
+        {
+          name: "libcap2",
+          version: "1:2.66-5ubuntu2.4",
+          purl: "pkg:deb/ubuntu/libcap2@1%3A2.66-5ubuntu2.4?distro=ubuntu-noble",
+        },
+        { name: "mystery", version: "1", purl: "pkg:deb/vendor/mystery@1?distro=debian-12" },
+        { name: "unqualified", version: "1", purl: "pkg:deb/debian/unqualified@1" },
+      ],
+    });
+
+    expect(components.map(({ ecosystem, matchable }) => ({ ecosystem, matchable }))).toEqual([
+      { ecosystem: "Ubuntu:24.04:LTS", matchable: true },
+      { ecosystem: "Ubuntu:24.04:LTS", matchable: true },
+      { ecosystem: "unknown:deb", matchable: false },
+      { ecosystem: "unsupported:deb:debian", matchable: false },
+    ]);
+  });
+
+  it("ignores a stale container architecture in favor of package evidence", () => {
+    expect(
+      imageIdentityFromPredicate({
+        spdxVersion: "SPDX-2.3",
+        documentDescribes: ["SPDXRef-Container"],
+        packages: [
+          {
+            SPDXID: "SPDXRef-Container",
+            name: "image",
+            versionInfo: "candidate",
+            primaryPackagePurpose: "CONTAINER",
+            externalRefs: [
+              {
+                referenceType: "purl",
+                referenceLocator: `pkg:oci/image@sha256%3A${"a".repeat(64)}?arch=amd64`,
+              },
+            ],
+          },
+          {
+            name: "openssl",
+            versionInfo: "3.0.13-0ubuntu3.15",
+            externalRefs: [
+              {
+                referenceType: "purl",
+                referenceLocator:
+                  "pkg:deb/ubuntu/openssl@3.0.13-0ubuntu3.15?arch=arm64&distro=ubuntu-24.04",
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual({ platform: "linux/arm64" });
   });
 
   it("prefers the canonical purl version over a decorated SPDX versionInfo", () => {
@@ -192,13 +261,16 @@ describe("SBOM predicate parser", () => {
       components: Array.from({ length: 200 }, (_, index) => ({
         name: `package-${index}`,
         version: `1.0.${index}`,
-        purl: `pkg:${ecosystems[index % ecosystems.length]}/package-${index}@1.0.${index}`,
+        purl:
+          ecosystems[index % ecosystems.length] === "deb"
+            ? `pkg:deb/debian/package-${index}@1.0.${index}?distro=debian-12`
+            : `pkg:${ecosystems[index % ecosystems.length]}/package-${index}@1.0.${index}`,
       })),
     });
 
     expect(components).toHaveLength(200);
     expect(new Set(components.map((component) => component.ecosystem))).toEqual(
-      new Set(["Debian", "npm", "PyPI"]),
+      new Set(["Debian:12", "npm", "PyPI"]),
     );
   });
 

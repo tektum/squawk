@@ -15,6 +15,11 @@ import { safeIssues } from "./error-detail";
 import { inventoryResponse } from "./inventory";
 import { registerPublicRoutes } from "./public-api";
 import { appendVex, listFindings, retireSbom } from "./repository";
+import {
+  ActionsAuthenticationError,
+  ActionsAuthorizationError,
+  registerReconciliationRoutes,
+} from "./reconciliation-api";
 import { PredicateError } from "./sbom";
 import { runScheduled } from "./scheduled";
 import { httpsRedirect, insecurePublicRequest } from "./transport";
@@ -74,6 +79,8 @@ app.post("/webhooks/github", async (context) => {
     throw error;
   }
 });
+
+registerReconciliationRoutes(app);
 
 app.use("/v1/*", async (context, next) => {
   const principal = await authenticate(context.req.header("Authorization"), {
@@ -148,6 +155,9 @@ app.get("/v1/orgs/:id/findings", async (context) => {
 });
 
 app.onError((error, context) => {
+  if (error instanceof ActionsAuthenticationError)
+    return context.json({ error: "unauthorized" }, 401);
+  if (error instanceof ActionsAuthorizationError) return context.json({ error: "forbidden" }, 403);
   if (error instanceof AuthenticationError) return context.json({ error: "unauthorized" }, 401);
   if (error instanceof AuthorizationError) return context.json({ error: "forbidden" }, 403);
   if (error instanceof WebhookError) return context.json({ error: error.message }, error.status);
