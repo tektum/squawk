@@ -10,6 +10,11 @@ beforeEach(async () => {
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM public_activity"),
+    env.DB.prepare("DELETE FROM reconciliation_deliveries"),
+    env.DB.prepare("DELETE FROM image_reconciliation_state"),
+    env.DB.prepare("DELETE FROM reconciliation_checkpoints"),
+    env.DB.prepare("DELETE FROM authoritative_retirements"),
+    env.DB.prepare("DELETE FROM advisory_feed_checks"),
     env.DB.prepare("DELETE FROM github_ingestion_jobs"),
     env.DB.prepare("DELETE FROM osv_advisory_jobs"),
     env.DB.prepare("DELETE FROM matching_errors"),
@@ -20,6 +25,7 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM components"),
     env.DB.prepare("DELETE FROM vulnerabilities"),
     env.DB.prepare("DELETE FROM sboms"),
+    env.DB.prepare("DELETE FROM image_inventory_generations"),
     env.DB.prepare("DELETE FROM sync_cursors"),
     env.DB.prepare("DELETE FROM osv_ecosystems"),
     env.DB.prepare("DELETE FROM github_sources"),

@@ -49,12 +49,18 @@ async function recordDeadLetters(batch: MessageBatch, database: D1Database): Pro
     if (dispatch) {
       const parsed = dispatchMessageSchema.safeParse(message.body);
       if (parsed.success)
-        await database
-          .prepare(
-            "UPDATE dispatch_deliveries SET status='failed',attempted_at=?,error='dead-letter queue' WHERE delivery_id=? AND status='pending'",
-          )
-          .bind(Date.now(), parsed.data.deliveryId)
-          .run();
+        await database.batch([
+          database
+            .prepare(
+              "UPDATE dispatch_deliveries SET status='failed',attempted_at=?,error='dead-letter queue' WHERE delivery_id=? AND status='pending'",
+            )
+            .bind(Date.now(), parsed.data.deliveryId),
+          database
+            .prepare(
+              "UPDATE reconciliation_deliveries SET status='failed',attempted_at=?,error='dead-letter queue' WHERE delivery_id=? AND status='pending' AND attempt_id IS NULL",
+            )
+            .bind(Date.now(), parsed.data.deliveryId),
+        ]);
     }
     await recordActivity(database, kind, "failed");
     console.error("Queue message exhausted its retries", { queue: batch.queue });

@@ -11,10 +11,14 @@ describe("ecosystem reconciliation plan", () => {
       { id: 2, purl: alpine, ecosystem: "Alpine", matchable: 1, version: "1.37.0-r61" },
     ]);
 
-    expect(plan.updates).toEqual([
+    expect(plan.updates).toHaveLength(2);
+    expect(plan.updates[0]).toContain(
       "UPDATE components SET ecosystem='Wolfi',matchable=1,version='20260413-r0' WHERE id=1;",
+    );
+    expect(plan.updates[1]).toContain(
       "UPDATE components SET ecosystem='Alpine:v3.21',matchable=1,version='1.37.0-r61' WHERE id=2;",
-    ]);
+    );
+    expect(plan.updates[0]).toContain("DELETE FROM findings WHERE component_id=1");
   });
 
   it("restates a decorated version to the canonical purl version", () => {
@@ -28,19 +32,21 @@ describe("ecosystem reconciliation plan", () => {
       },
     ]);
 
-    expect(plan.updates).toEqual([
+    expect(plan.updates).toHaveLength(1);
+    expect(plan.updates[0]).toContain(
       "UPDATE components SET ecosystem='Go',matchable=1,version='1.26.5' WHERE id=5;",
-    ]);
+    );
   });
 
-  it("rebuilds derived findings even when every component is already correct", () => {
+  it("requeues without deleting unrelated derived state", () => {
     const plan = reconciliationPlan([
       { id: 1, purl: wolfi, ecosystem: "Wolfi", matchable: 1, version: "20260413-r0" },
     ]);
 
     expect(plan.updates).toEqual([]);
-    expect(plan.requeue).toContain("DELETE FROM findings");
-    expect(plan.requeue).toContain("DELETE FROM vulnerabilities");
+    expect(plan.requeue).not.toContain("DELETE FROM vulnerabilities");
+    expect(plan.requeue).not.toContain("DELETE FROM findings;");
+    expect(plan.requeue).toContain("WHERE NOT EXISTS");
     expect(plan.requeue).toContain("UPDATE sboms SET backfill_status='pending'");
   });
 
@@ -55,8 +61,26 @@ describe("ecosystem reconciliation plan", () => {
       },
     ]);
 
-    expect(plan.updates).toEqual([
+    expect(plan.updates).toHaveLength(1);
+    expect(plan.updates[0]).toContain(
       "UPDATE components SET ecosystem='unknown:apk',matchable=0,version='1.37.0-r61' WHERE id=7;",
+    );
+  });
+
+  it("repairs persisted Ubuntu identities before rebackfill", () => {
+    const plan = reconciliationPlan([
+      {
+        id: 8,
+        purl: "pkg:deb/ubuntu/openssl@3.0.13-0ubuntu3.15?distro=ubuntu-24.04",
+        ecosystem: "Debian",
+        matchable: 1,
+        version: "3.0.13-0ubuntu3.15",
+      },
     ]);
+
+    expect(plan.updates[0]).toContain("DELETE FROM findings WHERE component_id=8");
+    expect(plan.updates[0]).toContain(
+      "UPDATE components SET ecosystem='Ubuntu:24.04:LTS',matchable=1",
+    );
   });
 });

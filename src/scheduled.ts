@@ -4,7 +4,10 @@ import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
 import { RunDeadline, SubrequestBudget } from "./budget";
 import { type DispatchEnv, type DispatchQueueEnv, enqueueDispatch } from "./dispatch";
 import { describeError } from "./error-detail";
-import { discoverAdvisories, requeueAdvisoryJobs } from "./sync";
+import { enqueueReconciliations } from "./reconciliation-dispatch";
+import { refreshReconciliationCheckpoints } from "./reconciliation-state";
+import { refreshRetirementCheckpoints } from "./retirement-checkpoint";
+import { discoverAdvisories, refreshFeedChecks, requeueAdvisoryJobs } from "./sync";
 import { type IngestionJob, ingestPendingImage } from "./webhook-ingestion";
 
 type ScheduledEnv = DispatchEnv &
@@ -186,6 +189,7 @@ async function executeScheduled(
           ecosystem,
           osvBaseUrl: env.OSV_BASE_URL,
           queue: env.OSV_ADVISORY_JOBS,
+          now,
         });
       } catch (error) {
         console.error("Scheduled OSV discovery failed", { ecosystem, error: describeError(error) });
@@ -202,6 +206,9 @@ async function executeScheduled(
   } catch (error) {
     console.error("Scheduled advisory requeue failed", { error: describeError(error) });
   }
+  await refreshFeedChecks(env.DB, now);
+  await refreshReconciliationCheckpoints(env.DB, now);
+  await refreshRetirementCheckpoints(env.DB, now);
   await runDispatchStage(env, now);
 }
 
@@ -216,7 +223,9 @@ async function executeScheduled(
 export async function runDispatchStage(env: ScheduledEnv, now: number): Promise<void> {
   if (env.DISPATCH_ENABLED !== "true") return;
   try {
-    const enqueued = await enqueueDispatch(env, now);
+    const findings = await enqueueDispatch(env, now);
+    const reconciliations = await enqueueReconciliations(env, now);
+    const enqueued = findings + reconciliations;
     // 'pending' means work is now owned by the queue; 'ignored' means there was none.
     await recordActivity(env.DB, "dispatch", enqueued > 0 ? "pending" : "ignored", now);
   } catch (error) {

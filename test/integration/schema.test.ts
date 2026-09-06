@@ -22,6 +22,12 @@ describe("D1 migration contract", () => {
       "github_sources",
       "github_deliveries",
       "public_activity",
+      "image_inventory_generations",
+      "advisory_feed_checks",
+      "image_reconciliation_state",
+      "reconciliation_checkpoints",
+      "reconciliation_deliveries",
+      "authoritative_retirements",
     ]) {
       expect(tables.results.some((table) => table.name === name)).toBe(true);
     }
@@ -86,10 +92,31 @@ describe("D1 migration contract", () => {
   });
 });
 
+it("does not create generation rows for unconfigured legacy provenance", async () => {
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO orgs VALUES ('legacy','app',0)"),
+    env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at,installation_id,repository_id) VALUES ('legacy-sbom','legacy','image','logical','linux/amd64','digest','complete',0,'missing-install','missing-repo')",
+    ),
+  ]);
+  await expect(
+    env.DB.prepare("SELECT COUNT(*) FROM image_inventory_generations").first("COUNT(*)"),
+  ).resolves.toBe(0);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM sboms WHERE id='legacy-sbom'"),
+    env.DB.prepare("DELETE FROM orgs WHERE descope_tenant_id='legacy'"),
+  ]);
+  await expect(
+    env.DB.prepare("SELECT COUNT(*) FROM image_inventory_generations").first("COUNT(*)"),
+  ).resolves.toBe(0);
+});
+
 it("can migrate all tenant-owned rows to the real Descope tenant", async () => {
   await env.DB.batch([
     env.DB.prepare("INSERT INTO orgs VALUES ('stale','app',0)"),
-    env.DB.prepare("INSERT INTO github_sources VALUES ('1','2','stale',0,'monitor.yaml','main')"),
+    env.DB.prepare(
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,created_at,dispatch_workflow,dispatch_ref) VALUES ('1','2','stale',0,'monitor.yaml','main')",
+    ),
     env.DB.prepare(
       "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('sbom','stale','image','logical','linux/amd64','digest','complete',0)",
     ),
@@ -123,7 +150,7 @@ it("adopts SBOM provenance from the delivery receipt for the same digest", async
   await env.DB.batch([
     env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
     env.DB.prepare(
-      "INSERT INTO github_sources VALUES ('install','repo','tenant',0,'monitor.yaml','main')",
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,created_at,dispatch_workflow,dispatch_ref) VALUES ('install','repo','tenant',0,'monitor.yaml','main')",
     ),
     env.DB.prepare(
       "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('sbom','tenant',?,?,'linux/amd64','digest','complete',0)",
@@ -147,10 +174,10 @@ it("leaves provenance null when two sources published the same digest", async ()
   await env.DB.batch([
     env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
     env.DB.prepare(
-      "INSERT INTO github_sources VALUES ('install','repo','tenant',0,'monitor.yaml','main')",
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,created_at,dispatch_workflow,dispatch_ref) VALUES ('install','repo','tenant',0,'monitor.yaml','main')",
     ),
     env.DB.prepare(
-      "INSERT INTO github_sources VALUES ('rival','other','tenant',0,'monitor.yaml','main')",
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,created_at,dispatch_workflow,dispatch_ref) VALUES ('rival','other','tenant',0,'monitor.yaml','main')",
     ),
     env.DB.prepare(
       "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('shared','tenant',?,?,'linux/amd64','digest','complete',0)",
@@ -178,7 +205,7 @@ it("ignores a receipt whose source belongs to another organization", async () =>
     env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
     env.DB.prepare("INSERT INTO orgs VALUES ('other','app',0)"),
     env.DB.prepare(
-      "INSERT INTO github_sources VALUES ('rival','other-repo','other',0,'monitor.yaml','main')",
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,created_at,dispatch_workflow,dispatch_ref) VALUES ('rival','other-repo','other',0,'monitor.yaml','main')",
     ),
     env.DB.prepare(
       "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('foreign','tenant',?,?,'linux/amd64','digest','complete',0)",
@@ -201,7 +228,7 @@ it("ignores a rejected delivery receipt", async () => {
   await env.DB.batch([
     env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
     env.DB.prepare(
-      "INSERT INTO github_sources VALUES ('install','repo','tenant',0,'monitor.yaml','main')",
+      "INSERT INTO github_sources (installation_id,repository_id,org_id,created_at,dispatch_workflow,dispatch_ref) VALUES ('install','repo','tenant',0,'monitor.yaml','main')",
     ),
     env.DB.prepare(
       "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('rejected','tenant',?,?,'linux/amd64','digest','complete',0)",

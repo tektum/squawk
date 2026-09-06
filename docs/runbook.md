@@ -36,6 +36,47 @@ curl -X POST https://WORKER/v1/operations/scheduled \
 The endpoint returns `204` only after the scheduled pipeline completes. It rejects
 missing tokens, principals without `operations.run`, and machine-only principals.
 
+## Reconciliation v2 cutover
+
+Do not change a source to schema v2 until the consumer and producer versions are
+deployed together. The observed staging Worker origin is
+`https://squawk-staging.omerc.workers.dev`; no production Worker origin is known.
+Configure that exact origin, without a trailing slash, in the staging workflow's
+trusted `SQUAWK_RECONCILIATION_ORIGIN`; never derive it from a dispatch payload.
+
+After applying migrations, set `DISPATCH_ENABLED=false`. While dispatch is paused,
+repair stored component identities and reingest current images from the authoritative registry index:
+
+```sh
+bun scripts/reconcile-ecosystems.ts squawk-staging
+bun scripts/reconcile-github-images.ts squawk-staging CATALOG_URL INSTALLATION_ID REPOSITORY_ID
+```
+
+Wait for no ingestion jobs, no incomplete active SBOM backfills, and no incomplete
+advisory jobs through each latest feed check. Every image must have one active amd64
+and one active arm64 SBOM whose child digest equals the final OCI index descriptor.
+`image_reconciliation_state` must be `ready`; Ubuntu or unknown deb coverage must be
+explicitly supported rather than omitted. Old immutable `created_at` values are valid;
+the feed check and evaluation must be current.
+
+With dispatch still paused, verify D1 has no pending v1 delivery and the configured
+GitHub workflow has no queued, requested, waiting, or in-progress legacy
+`workflow_dispatch` run. Legacy accepted rows have no run ID, so both checks are
+required. Verify the latest eligible checkpoint, then set the consumer repository
+variable `SQUAWK_RECONCILIATION_ORIGIN` to the independently reviewed endpoint
+`https://squawk-staging.omerc.workers.dev`; any other origin is rejected before
+OIDC minting. While still paused, set the consumer's
+`SQUAWK_RECONCILIATION_V2_REQUIRED=true` and that source's
+`dispatch_schema_version=2`, then restore dispatch for the initial canary.
+Version 2 requires the consumer flag to equal `true`; version 1 requires it not to.
+Verify the first v2 run binds the returned GitHub `workflow_run_id`, fetches with
+the exact OIDC claims, and acknowledges the exact served checkpoint. Keep v2
+enabled only after this verification; otherwise pause dispatch. Drain in-flight
+workflows before changing either protocol setting during rollback. A missing
+acknowledgement or a newer blocked revision must leave the image unapplied and
+retryable. Manual SBOM retirement is not authoritative retirement evidence and
+must remain blocked.
+
 ## Admin panel
 
 `https://WORKER/admin` runs the Descope `sign-up-or-in` flow and, once signed in,
