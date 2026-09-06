@@ -34,7 +34,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
-    "@cloudflare/vitest-pool-workers": "0.21.3",
+    "@cloudflare/vitest-pool-workers": "0.22.0",
     "@descope/react-sdk": "3.2.1",
     "@octokit/webhooks-methods": "6.0.0",
     "@types/node": "26.4.1",
