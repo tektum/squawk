@@ -106,18 +106,23 @@ export async function backfillSbom(options: BackfillOptions): Promise<void> {
           .run();
       }
     }
-    await options.database
-      .prepare("UPDATE sboms SET backfill_status='complete',backfill_error=NULL WHERE id=?")
-      .bind(options.sbomId)
+    const completed = await options.database
+      .prepare(
+        "UPDATE sboms SET backfill_status='complete',backfill_error=NULL WHERE id=? AND retired_at IS NULL AND backfill_status='running' AND backfill_attempted_at=?",
+      )
+      .bind(options.sbomId, now)
       .run();
-    await recordActivity(options.database, "scan", "completed", now);
+    if (completed.meta.changes > 0)
+      await recordActivity(options.database, "scan", "completed", now);
   } catch (error) {
     const message = describeError(error);
-    await options.database
-      .prepare("UPDATE sboms SET backfill_status='failed',backfill_error=? WHERE id=?")
-      .bind(message.slice(0, 500), options.sbomId)
+    const failed = await options.database
+      .prepare(
+        "UPDATE sboms SET backfill_status='failed',backfill_error=? WHERE id=? AND retired_at IS NULL AND backfill_status='running' AND backfill_attempted_at=?",
+      )
+      .bind(message.slice(0, 500), options.sbomId, now)
       .run();
-    await recordActivity(options.database, "scan", "failed", now);
+    if (failed.meta.changes > 0) await recordActivity(options.database, "scan", "failed", now);
     throw error;
   }
 }
