@@ -79,6 +79,31 @@ describe("reconciliation checkpoint state", () => {
     ).resolves.toBe(3);
   });
 
+  it("does not allow payload fields to override checkpoint identity", async () => {
+    const generation = await currentInventoryGeneration(env.DB, source);
+    await persistRevision(
+      env.DB,
+      source,
+      {
+        state: "ready",
+        fingerprint: "4".repeat(64),
+        generation,
+        payload: { checkpoint_id: "attacker", revision: 999, kind: "inventory_snapshot" },
+      },
+      now,
+    );
+    const row = await env.DB.prepare(
+      "SELECT checkpoint_id,revision,payload_json FROM reconciliation_checkpoints",
+    ).first<{ checkpoint_id: string; revision: number; payload_json: string }>();
+    const payload = JSON.parse(row?.payload_json ?? "{}") as {
+      checkpoint_id?: string;
+      revision?: number;
+    };
+    expect(payload).toMatchObject({ checkpoint_id: row?.checkpoint_id, revision: row?.revision });
+    expect(payload.checkpoint_id).not.toBe("attacker");
+    expect(payload.revision).not.toBe(999);
+  });
+
   it("cannot publish a clean candidate after a newer ingestion starts", async () => {
     const clean = await buildInventoryCandidate(env.DB, source, now);
     await env.DB.prepare(
@@ -207,6 +232,34 @@ describe("reconciliation checkpoint state", () => {
       env.DB.prepare("SELECT reason FROM image_reconciliation_state").first("reason"),
     ).resolves.toBe("feed_stale");
   });
+
+  it("advances a durable cursor across bounded refresh pages", async () => {
+    await env.DB.batch(
+      Array.from({ length: 25 }, (_, index) => {
+        const suffix = index.toString(16).padStart(64, "0");
+        return env.DB.prepare(
+          `INSERT INTO sboms
+           (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,
+            created_at,installation_id,repository_id)
+           VALUES (?,'tenant',?,?,'linux/amd64',?,'complete',1,'123','9')`,
+        ).bind(
+          `page-${index}`,
+          `ghcr.io/owner/page-${index}@sha256:${suffix}`,
+          `ghcr.io/owner/page-${index}@sha256:${suffix}`,
+          "6".repeat(64),
+        );
+      }),
+    );
+
+    await refreshReconciliationCheckpoints(env.DB, now);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state").first("COUNT(*)"),
+    ).resolves.toBe(25);
+    await refreshReconciliationCheckpoints(env.DB, now);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state").first("COUNT(*)"),
+    ).resolves.toBe(26);
+  });
   it("emits retirement only from validated replacement evidence", async () => {
     await refreshReconciliationCheckpoints(env.DB, now);
     await env.DB.prepare("UPDATE sboms SET retired_at=?")
@@ -220,8 +273,22 @@ describe("reconciliation checkpoint state", () => {
     )
       .bind(logical, `ghcr.io/owner/demo@sha256:${"9".repeat(64)}`, now, now + 1, now + 1)
       .run();
-
-    await refreshRetirementCheckpoints(env.DB, now + 1);
+    const generation = await currentInventoryGeneration(env.DB, source);
+    await env.DB.prepare(
+      `CREATE TRIGGER inject_retirement_generation_race
+       BEFORE INSERT ON reconciliation_checkpoints
+       WHEN NEW.state='ready' AND (SELECT generation FROM image_inventory_generations
+         WHERE installation_id='123' AND repository_id='9' AND logical_image_ref='${logical}')=${generation}
+       BEGIN
+         UPDATE image_inventory_generations SET generation=generation+1
+         WHERE installation_id='123' AND repository_id='9' AND logical_image_ref='${logical}';
+       END`,
+    ).run();
+    try {
+      await refreshRetirementCheckpoints(env.DB, now + 1);
+    } finally {
+      await env.DB.prepare("DROP TRIGGER inject_retirement_generation_race").run();
+    }
     const payload = await env.DB.prepare(
       "SELECT payload_json FROM reconciliation_checkpoints WHERE revision=2",
     ).first<string>("payload_json");

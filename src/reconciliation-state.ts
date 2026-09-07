@@ -1,4 +1,5 @@
 import { canonicalJson } from "./canonical-json";
+import type { RunDeadline } from "./budget";
 import { sha256 } from "./digest";
 import { buildInventoryCandidate } from "./inventory-checkpoint";
 import { currentInventoryGeneration, type InventoryImageKey } from "./inventory-generation";
@@ -20,7 +21,7 @@ export type CheckpointCandidate =
       readonly generation: number;
     };
 
-class StaleInventoryGeneration extends Error {
+export class StaleInventoryGeneration extends Error {
   readonly name = "StaleInventoryGeneration";
 }
 
@@ -66,9 +67,9 @@ export async function persistRevision(
     let payloadSha256: string | null = null;
     if (candidate.state === "ready") {
       payloadJson = canonicalJson({
+        ...candidate.payload,
         checkpoint_id: checkpointId,
         revision,
-        ...candidate.payload,
       });
       payloadSha256 = await sha256(payloadJson);
     }
@@ -103,13 +104,16 @@ export async function persistRevision(
            (installation_id,repository_id,logical_image_ref,revision,state,reason,checkpoint_id,applied_revision,inventory_generation,state_sha256,updated_at)
            SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (
              SELECT 1 FROM reconciliation_checkpoints WHERE checkpoint_id=?
-           )
+           ) AND (SELECT generation FROM image_inventory_generations
+             WHERE installation_id=? AND repository_id=? AND logical_image_ref=?)=?
            ON CONFLICT(installation_id,repository_id,logical_image_ref) DO UPDATE SET
              revision=excluded.revision,state=excluded.state,reason=excluded.reason,
              checkpoint_id=excluded.checkpoint_id,inventory_generation=excluded.inventory_generation,
              state_sha256=excluded.state_sha256,updated_at=excluded.updated_at
            WHERE image_reconciliation_state.revision=?
-             AND image_reconciliation_state.state_sha256=?`,
+             AND image_reconciliation_state.state_sha256=?
+             AND (SELECT generation FROM image_inventory_generations
+               WHERE installation_id=? AND repository_id=? AND logical_image_ref=?)=?`,
         )
         .bind(
           image.installation_id,
@@ -124,8 +128,16 @@ export async function persistRevision(
           candidate.fingerprint,
           now,
           checkpointId,
+          image.installation_id,
+          image.repository_id,
+          image.logical_image_ref,
+          candidate.generation,
           current?.revision ?? -1,
           current?.state_sha256 ?? "",
+          image.installation_id,
+          image.repository_id,
+          image.logical_image_ref,
+          candidate.generation,
         ),
     ]);
     if ((results[1]?.meta.changes ?? 0) > 0) return true;
@@ -174,22 +186,68 @@ export async function refreshReconciliationImage(
 export async function refreshReconciliationCheckpoints(
   database: D1Database,
   now = Date.now(),
+  deadline?: RunDeadline,
 ): Promise<number> {
+  const cursor = await database
+    .prepare(
+      `SELECT installation_id,repository_id,logical_image_ref FROM reconciliation_refresh_cursor
+       WHERE singleton=1`,
+    )
+    .first<{
+      readonly installation_id: string | null;
+      readonly repository_id: string | null;
+      readonly logical_image_ref: string | null;
+    }>();
   const images = (
     await database
       .prepare(
         `SELECT DISTINCT s.installation_id,s.repository_id,s.logical_image_ref
          FROM sboms s JOIN github_sources g
            ON g.installation_id=s.installation_id AND g.repository_id=s.repository_id
-         WHERE s.retired_at IS NULL AND s.installation_id IS NOT NULL
-           AND s.repository_id IS NOT NULL
-         ORDER BY s.installation_id,s.repository_id,s.logical_image_ref`,
+         WHERE s.retired_at IS NULL AND s.installation_id IS NOT NULL AND s.repository_id IS NOT NULL
+           AND (? IS NULL OR s.installation_id>? OR
+             (s.installation_id=? AND s.repository_id>?) OR
+             (s.installation_id=? AND s.repository_id=? AND s.logical_image_ref>?))
+         ORDER BY s.installation_id,s.repository_id,s.logical_image_ref LIMIT 25`,
+      )
+      .bind(
+        cursor?.installation_id ?? null,
+        cursor?.installation_id ?? "",
+        cursor?.installation_id ?? "",
+        cursor?.repository_id ?? "",
+        cursor?.installation_id ?? "",
+        cursor?.repository_id ?? "",
+        cursor?.logical_image_ref ?? "",
       )
       .all<ReconciliationImageKey>()
   ).results;
   let changed = 0;
+  let last: ReconciliationImageKey | undefined;
   for (const image of images) {
+    if (deadline?.expired) break;
     if (await refreshReconciliationImage(database, image, now)) changed += 1;
+    last = image;
+  }
+  if (last) {
+    const completePage = last === images.at(-1) && images.length < 25;
+    await database
+      .prepare(
+        `UPDATE reconciliation_refresh_cursor SET installation_id=?,repository_id=?,logical_image_ref=?
+         WHERE singleton=1`,
+      )
+      .bind(
+        completePage ? null : last.installation_id,
+        completePage ? null : last.repository_id,
+        completePage ? null : last.logical_image_ref,
+      )
+      .run();
+  } else if (images.length === 0 && cursor?.installation_id !== null) {
+    await database
+      .prepare(
+        `UPDATE reconciliation_refresh_cursor SET installation_id=NULL,repository_id=NULL,
+          logical_image_ref=NULL WHERE singleton=1`,
+      )
+      .run();
   }
   return changed;
 }

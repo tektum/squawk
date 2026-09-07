@@ -61,4 +61,30 @@ describe("attested platform repair", () => {
       },
     ]);
   });
+
+  it("rejects an occupied target before mutating the matching predicate", async () => {
+    await env.DB.prepare(
+      "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('blocker','tenant',?,?,'linux/arm64','other-predicate','complete',0)",
+    )
+      .bind(`ghcr.io/owner/demo@sha256:${"9".repeat(64)}`, logical)
+      .run();
+    const request = {
+      input: sbomInputSchema.parse({
+        image_ref: `ghcr.io/owner/demo@sha256:${"2".repeat(64)}`,
+        logical_image_ref: logical,
+        platform: "linux/arm64",
+        idempotency_key: "arm64".padEnd(32, "0"),
+        predicate: {},
+      }),
+      predicateSha256: "predicate-arm",
+      components: [],
+    };
+
+    await expect(reconcilePlatformRequests(env.DB, "tenant", logical, [request])).rejects.toThrow(
+      "conflicting platform submission",
+    );
+    await expect(
+      env.DB.prepare("SELECT platform FROM sboms WHERE id='old-arm'").first("platform"),
+    ).resolves.toBe("linux/amd64");
+  });
 });

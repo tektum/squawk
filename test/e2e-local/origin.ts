@@ -177,7 +177,9 @@ async function githubRoute(request: Request, path: string, state: GitHubState): 
     return problem(400, "invalid dispatch payload", path);
   }
   state.log.push({ owner, repo, workflow, ref: parsed.data.ref, payload });
-  return new Response(null, { status: 204 });
+  return parsed.data.return_run_details
+    ? Response.json({ workflow_run_id: state.log.length, run_url: "local", html_url: "local" })
+    : new Response(null, { status: 204 });
 }
 
 function registryRoute(request: Request, path: string, registry: Registry): Routed {

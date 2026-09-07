@@ -164,6 +164,29 @@ describe("durable multi-platform dispatch", () => {
     ).resolves.toBe(0);
   });
 
+  it("acknowledges queued work without dispatching while paused", async () => {
+    const producer = recordingQueue();
+    const bindings = {
+      DB: env.DB,
+      GH_APP_ID: "",
+      GH_APP_INSTALLATION_ID: "",
+      GH_APP_PRIVATE_KEY: "",
+      FINDING_DISPATCH: producer.queue,
+      DISPATCH_ENABLED: "false",
+    };
+    await enqueueDispatch(bindings, 1_000);
+    const drained = await drainQueue(
+      "squawk-finding-dispatch",
+      producer.sent.map(({ body }) => body),
+      bindings,
+    );
+
+    expect(drained).toEqual({ acked: 1, retried: 0 });
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM dispatch_deliveries").first("COUNT(*)"),
+    ).resolves.toBe(0);
+  });
+
   it("atomically leases a claim before concurrent queue deliveries can POST", async () => {
     const pair = await generateKeyPair("RS256", { extractable: true });
     const privateKey = await exportPKCS8(pair.privateKey);
@@ -320,6 +343,40 @@ describe("durable multi-platform dispatch", () => {
     await expect(
       env.DB.prepare("SELECT COUNT(*) AS count FROM dispatch_deliveries").first<number>("count"),
     ).resolves.toBe(0);
+  });
+
+  it("continues to dispatch when one checkpoint refresh fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const producer = recordingQueue();
+    respond({ url: "https://osv.test/ecosystems.txt", status: 200, text: "npm\n" });
+    await env.DB.prepare(
+      `CREATE TRIGGER fail_checkpoint_refresh BEFORE INSERT ON reconciliation_checkpoints
+       BEGIN SELECT RAISE(FAIL,'injected checkpoint refresh failure'); END`,
+    ).run();
+    try {
+      await runScheduled(
+        {
+          ...env,
+          GH_APP_ID: "",
+          GH_APP_INSTALLATION_ID: "",
+          GH_APP_PRIVATE_KEY: "",
+          OSV_API_URL: "https://api.osv.test",
+          OSV_BASE_URL: "https://osv.test",
+          OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+          FINDING_DISPATCH: producer.queue,
+          DISPATCH_ENABLED: "true",
+        },
+        2_000,
+      );
+    } finally {
+      await env.DB.prepare("DROP TRIGGER fail_checkpoint_refresh").run();
+    }
+    expect(producer.sent).toHaveLength(1);
+    expect(error).toHaveBeenCalledWith(
+      "Scheduled reconciliation checkpoints refresh failed",
+      expect.objectContaining({ error: expect.any(String) }),
+    );
+    error.mockRestore();
   });
 
   it("records the enqueue outcome so a run that queued work is distinguishable", async () => {

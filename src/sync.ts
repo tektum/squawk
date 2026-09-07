@@ -37,16 +37,18 @@ export async function discoverAdvisories(options: DiscoveryOptions): Promise<num
     { signal: AbortSignal.timeout(10_000) },
   );
   if (!response.ok) throw new Error(`OSV modified feed failed (${response.status})`);
-  const boundary = new Set(cursor.boundary_ids.split(",").filter(Boolean));
-  const feedRows = (await response.text())
+  const lines = (await response.text())
     .trim()
     .split("\n")
-    .map((line) => {
-      const [modified, id] = line.split(",");
-      return feedRowSchema.safeParse({ modified: modified?.trim(), id: id?.trim() });
-    })
-    .flatMap((parsed) => (parsed.success ? [parsed.data] : []));
+    .map((line) => line.trim());
+  if (lines[0]?.toLowerCase() === "modified,id") lines.shift();
+  const feedRows = lines.map((line) => {
+    const [modified, id, extra] = line.split(",");
+    if (extra !== undefined) throw new Error("OSV modified feed row has extra fields");
+    return feedRowSchema.parse({ modified: modified?.trim(), id: id?.trim() });
+  });
   if (feedRows.length === 0) throw new Error("OSV modified feed was empty");
+  const boundary = new Set(cursor.boundary_ids.split(",").filter(Boolean));
   const rows = feedRows
     .filter(
       (row) =>

@@ -2,9 +2,13 @@ import { env } from "cloudflare:test";
 import { exportPKCS8, generateKeyPair } from "jose";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
+import { SubrequestBudget } from "../../src/budget";
 import { dispatchMessageSchema } from "../../src/dispatch";
 import { dispatchOne } from "../../src/dispatch-worker";
+import { TenantIdSchema } from "../../src/domain";
+import { releaseQuarantinedReconciliation } from "../../src/reconciliation-operations";
 import { enqueueReconciliations } from "../../src/reconciliation-dispatch";
+import { recoverTerminalRuns } from "../../src/reconciliation-recovery";
 import { recordingQueue } from "../queue";
 import { server } from "../server";
 
@@ -42,7 +46,11 @@ describe("reconciliation workflow dispatch", () => {
       http.post(
         "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
         async ({ request }) => {
-          const body = (await request.json()) as { inputs?: { payload?: string } };
+          const body = (await request.json()) as {
+            return_run_details?: boolean;
+            inputs?: { payload?: string };
+          };
+          expect(body.return_run_details).toBe(true);
           expect(JSON.parse(body.inputs?.payload ?? "{}")).toEqual({
             schema_version: 2,
             event: "reconcile",
@@ -272,5 +280,140 @@ describe("reconciliation workflow dispatch", () => {
       "reconciliation claim is already processing",
     );
     expect(dispatches).toBe(1);
+  });
+
+  it.each([403, 404, "network"])(
+    "isolates a permanent GitHub %s lookup failure",
+    async (failure) => {
+      await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO reconciliation_deliveries
+         (delivery_id,installation_id,repository_id,logical_image_ref,target_revision,status,
+          workflow_run_id,attempt_id,attempted_at,created_at)
+         VALUES (?,'123','9',?,1,'dispatched','77','attempt-77',1000,1000)`,
+        ).bind("a".repeat(64), logical),
+        env.DB.prepare(
+          `INSERT INTO reconciliation_deliveries
+         (delivery_id,installation_id,repository_id,logical_image_ref,target_revision,status,
+          workflow_run_id,attempt_id,attempted_at,created_at)
+         VALUES (?,'123','9',?,1,'dispatched','78','attempt-78',1001,1001)`,
+        ).bind("b".repeat(64), `${logical}-peer`),
+      ]);
+      server.use(
+        http.post("https://api.github.com/app/installations/123/access_tokens", () =>
+          HttpResponse.json({ token: "installation-token" }, { status: 201 }),
+        ),
+        http.get("https://api.github.com/repositories/9", () =>
+          HttpResponse.json({ full_name: "owner/repo" }),
+        ),
+        http.get("https://api.github.com/repos/owner/repo/actions/runs/77", () =>
+          typeof failure === "number"
+            ? HttpResponse.json({ error: "gone" }, { status: failure })
+            : HttpResponse.error(),
+        ),
+        http.get("https://api.github.com/repos/owner/repo/actions/runs/78", () =>
+          HttpResponse.json({ status: "completed", conclusion: "failure" }),
+        ),
+      );
+
+      await recoverTerminalRuns(
+        {
+          DB: env.DB,
+          GH_APP_ID: "42",
+          GH_APP_PRIVATE_KEY: privateKey,
+        },
+        { budget: new SubrequestBudget(6) },
+      );
+      const rows = await env.DB.prepare(
+        "SELECT workflow_run_id,status FROM reconciliation_deliveries ORDER BY delivery_id",
+      ).all<{ workflow_run_id: string | null; status: string }>();
+      expect(rows.results).toEqual([
+        { workflow_run_id: "77", status: "failed" },
+        { workflow_run_id: null, status: "pending" },
+      ]);
+    },
+  );
+  it("stops recovery after a GitHub rate limit", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO reconciliation_deliveries
+         (delivery_id,installation_id,repository_id,logical_image_ref,target_revision,status,
+          workflow_run_id,attempt_id,attempted_at,created_at)
+         VALUES (?,'123','9',?,1,'dispatched','77','attempt-77',1000,1000)`,
+      ).bind("a".repeat(64), logical),
+      env.DB.prepare(
+        `INSERT INTO reconciliation_deliveries
+         (delivery_id,installation_id,repository_id,logical_image_ref,target_revision,status,
+          workflow_run_id,attempt_id,attempted_at,created_at)
+         VALUES (?,'123','9',?,1,'dispatched','78','attempt-78',1001,1001)`,
+      ).bind("b".repeat(64), `${logical}-peer`),
+    ]);
+    let secondLookup = false;
+    server.use(
+      http.post("https://api.github.com/app/installations/123/access_tokens", () =>
+        HttpResponse.json({ token: "installation-token" }, { status: 201 }),
+      ),
+      http.get("https://api.github.com/repositories/9", () =>
+        HttpResponse.json({ full_name: "owner/repo" }),
+      ),
+      http.get("https://api.github.com/repos/owner/repo/actions/runs/77", () =>
+        HttpResponse.json({ error: "limited" }, { status: 429 }),
+      ),
+      http.get("https://api.github.com/repos/owner/repo/actions/runs/78", () => {
+        secondLookup = true;
+        return HttpResponse.json({ status: "completed", conclusion: "failure" });
+      }),
+    );
+
+    await recoverTerminalRuns(
+      { DB: env.DB, GH_APP_ID: "42", GH_APP_PRIVATE_KEY: privateKey },
+      { budget: new SubrequestBudget(6) },
+    );
+    expect(secondLookup).toBe(false);
+    await expect(
+      env.DB.prepare(
+        "SELECT error FROM reconciliation_deliveries WHERE workflow_run_id='77'",
+      ).first("error"),
+    ).resolves.toBe("GitHub 429");
+  });
+
+  it("requires the exact tenant and attempt to release a quarantine", async () => {
+    const producer = recordingQueue();
+    const bindings = {
+      DB: env.DB,
+      GH_APP_ID: "42",
+      GH_APP_INSTALLATION_ID: "123",
+      GH_APP_PRIVATE_KEY: privateKey,
+      FINDING_DISPATCH: producer.queue,
+    };
+    await enqueueReconciliations(bindings, 1_000);
+    const message = dispatchMessageSchema.parse(producer.sent[0]?.body);
+    const attemptId = crypto.randomUUID();
+    await env.DB.prepare(
+      `UPDATE reconciliation_deliveries SET attempt_id=?,attempted_at=2000,
+        error='workflow dispatch outcome unknown' WHERE delivery_id=?`,
+    )
+      .bind(attemptId, message.deliveryId)
+      .run();
+
+    await expect(
+      releaseQuarantinedReconciliation(
+        env.DB,
+        TenantIdSchema.parse("other"),
+        message.deliveryId,
+        attemptId,
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      releaseQuarantinedReconciliation(
+        env.DB,
+        TenantIdSchema.parse("tenant"),
+        message.deliveryId,
+        attemptId,
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      env.DB.prepare("SELECT attempt_id FROM reconciliation_deliveries").first("attempt_id"),
+    ).resolves.toBeNull();
   });
 });

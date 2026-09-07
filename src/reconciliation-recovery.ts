@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { RunDeadline, SubrequestBudget } from "./budget";
 import {
   defaultGitHubApiUrl,
   GitHubApiError,
@@ -13,31 +14,79 @@ const runStatusSchema = z.object({
 });
 
 type RecoveryEnv = GitHubAppEnv & { readonly DB: D1Database };
+export type RecoveryOptions = {
+  readonly budget?: SubrequestBudget;
+  readonly deadline?: RunDeadline;
+  readonly limit?: number;
+};
 
-export async function recoverTerminalRuns(env: RecoveryEnv): Promise<void> {
+async function recordRecoveryFailure(
+  database: D1Database,
+  row: {
+    readonly delivery_id: string;
+    readonly workflow_run_id: string;
+    readonly attempt_id: string;
+    readonly attempted_at: number;
+  },
+  error: string,
+  terminal: boolean,
+): Promise<void> {
+  await database
+    .prepare(
+      `UPDATE reconciliation_deliveries SET status=?,error=?
+       WHERE delivery_id=? AND status='dispatched' AND workflow_run_id=?
+         AND attempt_id=? AND attempted_at=?`,
+    )
+    .bind(
+      terminal ? "failed" : "dispatched",
+      error,
+      row.delivery_id,
+      row.workflow_run_id,
+      row.attempt_id,
+      row.attempted_at,
+    )
+    .run();
+}
+
+export async function recoverTerminalRuns(
+  env: RecoveryEnv,
+  options: RecoveryOptions = {},
+): Promise<void> {
+  const requestAllowance = Math.floor((options.budget?.remaining ?? 60) / 3);
+  const limit = Math.min(options.limit ?? 20, requestAllowance);
+  if (limit === 0 || options.deadline?.expired) return;
   const rows = (
     await env.DB.prepare(
       `SELECT delivery_id,installation_id,repository_id,workflow_run_id,attempt_id,attempted_at
        FROM reconciliation_deliveries WHERE status='dispatched'
-       ORDER BY attempted_at LIMIT 20`,
-    ).all<{
-      readonly delivery_id: string;
-      readonly installation_id: string;
-      readonly repository_id: string;
-      readonly workflow_run_id: string;
-      readonly attempt_id: string;
-      readonly attempted_at: number;
-    }>()
+       ORDER BY attempted_at LIMIT ?`,
+    )
+      .bind(limit)
+      .all<{
+        readonly delivery_id: string;
+        readonly installation_id: string;
+        readonly repository_id: string;
+        readonly workflow_run_id: string;
+        readonly attempt_id: string;
+        readonly attempted_at: number;
+      }>()
   ).results;
   for (const row of rows) {
+    if (options.deadline?.expired || (options.budget && options.budget.remaining < 3)) return;
     const apiUrl = env.GITHUB_API_URL ?? defaultGitHubApiUrl;
     try {
-      const token = await installationToken(env, {
-        installationId: row.installation_id,
-        repositoryId: row.repository_id,
-        permissions: { actions: "read" },
-      });
-      const repository = await repositoryPath(apiUrl, row.repository_id, token);
+      const token = await installationToken(
+        env,
+        {
+          installationId: row.installation_id,
+          repositoryId: row.repository_id,
+          permissions: { actions: "read" },
+        },
+        Date.now(),
+        options.budget,
+      );
+      const repository = await repositoryPath(apiUrl, row.repository_id, token, options.budget);
+      options.budget?.take();
       const response = await fetch(
         `${apiUrl}/repos/${repository}/actions/runs/${row.workflow_run_id}`,
         {
@@ -71,8 +120,16 @@ export async function recoverTerminalRuns(env: RecoveryEnv): Promise<void> {
         if (recovered.meta.changes === 0) continue;
       }
     } catch (error) {
-      if (!(error instanceof GitHubApiError) || (error.status !== 429 && error.status < 500))
-        throw error;
+      if (error instanceof GitHubApiError && error.status === 429) {
+        await recordRecoveryFailure(env.DB, row, "GitHub 429", false);
+        return;
+      }
+      if (error instanceof GitHubApiError) {
+        const terminal = error.status >= 400 && error.status < 500;
+        await recordRecoveryFailure(env.DB, row, `GitHub ${error.status}`, terminal);
+        continue;
+      }
+      await recordRecoveryFailure(env.DB, row, "recovery lookup failed", true);
     }
   }
 }

@@ -15,6 +15,11 @@ describe("vulnerable published image", () => {
     )
       .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "monitor.yaml", "main")
       .run();
+    respond({
+      url: "https://osv.test/npm/modified_id.csv",
+      status: 200,
+      text: "modified,id\n1970-01-01T00:00:01.000Z,OSV-old\n",
+    });
   });
 
   it("detects and dispatches lodash 4.17.20", async () => {

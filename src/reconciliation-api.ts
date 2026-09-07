@@ -5,9 +5,12 @@ import {
   ActionsAuthorizationError,
   authenticateActionsRun,
 } from "./actions-oidc";
+import { RunDeadline, SubrequestBudget } from "./budget";
+import { describeError } from "./error-detail";
 import { reconciliationReasons } from "./reconciliation-contract";
 import { refreshReconciliationImage } from "./reconciliation-state";
 import { enqueueReconciliations } from "./reconciliation-dispatch";
+import { refreshRetirementCheckpoint } from "./retirement-checkpoint";
 import { refreshFeedChecks } from "./sync";
 import type { WorkerEnv } from "./worker-env";
 
@@ -72,16 +75,21 @@ export function registerReconciliationRoutes(app: Hono<WorkerEnv>): void {
       return context.json({ error: "reconciliation delivery not found" }, 404);
     await authorize(context.req.header("Authorization"), binding);
     const now = Date.now();
-    await refreshFeedChecks(context.env.DB, now);
-    await refreshReconciliationImage(
-      context.env.DB,
-      {
-        installation_id: binding.installation_id,
-        repository_id: binding.repository_id,
-        logical_image_ref: binding.logical_image_ref,
-      },
-      now,
-    );
+    const image = {
+      installation_id: binding.installation_id,
+      repository_id: binding.repository_id,
+      logical_image_ref: binding.logical_image_ref,
+    };
+    const active = await context.env.DB.prepare(
+      `SELECT 1 FROM sboms WHERE installation_id=? AND repository_id=?
+       AND logical_image_ref=? AND retired_at IS NULL LIMIT 1`,
+    )
+      .bind(binding.installation_id, binding.repository_id, binding.logical_image_ref)
+      .first();
+    if (active) {
+      await refreshFeedChecks(context.env.DB, now);
+      await refreshReconciliationImage(context.env.DB, image, now);
+    } else await refreshRetirementCheckpoint(context.env.DB, image, now);
     const state = await context.env.DB.prepare(
       `SELECT revision,state,reason,checkpoint_id FROM image_reconciliation_state
        WHERE installation_id=? AND repository_id=? AND logical_image_ref=?`,
@@ -220,7 +228,18 @@ export function registerReconciliationRoutes(app: Hono<WorkerEnv>): void {
     ]);
     if (results.some((result) => result.meta.changes !== 1))
       return context.json({ error: "reconciliation checkpoint superseded" }, 409);
-    await enqueueReconciliations(context.env, now);
+    if (context.env.DISPATCH_ENABLED === "true")
+      context.env.EXECUTION_CONTEXT.waitUntil(
+        enqueueReconciliations(context.env, now, {
+          budget: new SubrequestBudget(3),
+          deadline: new RunDeadline(Date.now(), 20_000),
+          limit: 0,
+        }).catch((error: unknown) => {
+          console.error("Reconciliation enqueue after acknowledgement failed", {
+            error: describeError(error),
+          });
+        }),
+      );
     return context.body(null, 204);
   });
 }

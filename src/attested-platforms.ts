@@ -29,23 +29,49 @@ export async function reconcilePlatformRequests(
       readonly image_ref: string;
       readonly predicate_sha256: string;
     }>();
+  const repairs: { readonly id: string; readonly platform: string; readonly imageRef: string }[] =
+    [];
   for (const [platform, identity] of identities) {
-    const [imageRef, predicateSha256] = identity.split("\u0000");
+    const separator = identity.indexOf("\u0000");
+    if (separator <= 0 || separator === identity.length - 1)
+      throw new WebhookError(409, "conflicting platform submission");
+    const imageRef = identity.slice(0, separator);
+    const predicateSha256 = identity.slice(separator + 1);
     const samePredicate = storedRows.results.filter(
       (row) => row.predicate_sha256 === predicateSha256,
     );
     if (samePredicate.length > 1) throw new WebhookError(409, "conflicting platform submission");
-    if (samePredicate[0]) {
-      if (samePredicate[0].platform !== platform || samePredicate[0].image_ref !== imageRef)
-        await database
-          .prepare("UPDATE sboms SET platform=?,image_ref=? WHERE id=?")
-          .bind(platform, imageRef, samePredicate[0].id)
-          .run();
+    const existing = samePredicate[0];
+    if (existing) {
+      if (existing.platform !== platform || existing.image_ref !== imageRef)
+        repairs.push({ id: existing.id, platform, imageRef });
       continue;
     }
-    if (storedRows.results.some((row) => row.platform === platform))
+    const occupied = storedRows.results.find((row) => row.platform === platform);
+    if (occupied) repairs.push({ id: "", platform, imageRef });
+  }
+  for (const repair of repairs) {
+    const occupied = storedRows.results.filter(
+      (row) => row.platform === repair.platform && row.id !== repair.id,
+    );
+    if (
+      occupied.some((row) => {
+        const move = repairs.find((candidate) => candidate.id === row.id);
+        return !move || move.platform === repair.platform;
+      })
+    )
       throw new WebhookError(409, "conflicting platform submission");
   }
+  if (repairs.some((repair) => repair.id === ""))
+    throw new WebhookError(409, "conflicting platform submission");
+  if (repairs.length > 0)
+    await database.batch(
+      repairs.map((repair) =>
+        database
+          .prepare("UPDATE sboms SET platform=?,image_ref=? WHERE id=?")
+          .bind(repair.platform, repair.imageRef, repair.id),
+      ),
+    );
   return unique;
 }
 

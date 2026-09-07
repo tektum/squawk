@@ -77,6 +77,20 @@ acknowledgement or a newer blocked revision must leave the image unapplied and
 retryable. Manual SBOM retirement is not authoritative retirement evidence and
 must remain blocked.
 
+If a dispatch is quarantined with `workflow dispatch outcome unknown`, first verify
+through GitHub Actions that the recorded attempt created no workflow run. Only then
+release that exact attempt with a human `operations.run` token:
+
+```sh
+curl -X POST https://WORKER/v1/orgs/TENANT/reconciliations/DELIVERY_ID/release \
+  -H "Authorization: Bearer $DESCOPE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"attempt_id":"ATTEMPT_UUID"}'
+```
+
+The attempt ID is exposed in the authenticated reconciliation jobs view. A mismatched,
+already-dispatched, or non-quarantined attempt is not released.
+
 ## Admin panel
 
 `https://WORKER/admin` runs the Descope `sign-up-or-in` flow and, once signed in,

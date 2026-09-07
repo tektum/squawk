@@ -116,6 +116,34 @@ describe("OSV advisory queue", () => {
     ).resolves.toBe("pending:0");
   });
 
+  it("rejects malformed rows before registering or checkpointing", async () => {
+    respond({
+      url: "https://osv.test/npm/modified_id.csv",
+      status: 200,
+      text: `modified,id\n${modifiedAt},OSV-1\nnot-a-date,OSV-bad\n`,
+    });
+
+    await expect(
+      discoverAdvisories({
+        database: env.DB,
+        ecosystem: "npm",
+        osvBaseUrl: "https://osv.test",
+        queue: { sendBatch: async () => undefined },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      env.DB.prepare("SELECT last_synced_at FROM sync_cursors WHERE ecosystem='npm'").first(
+        "last_synced_at",
+      ),
+    ).resolves.toBe("2026-01-01T00:00:00Z");
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM osv_advisory_jobs").first("COUNT(*)"),
+    ).resolves.toBe(0);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM advisory_feed_checks").first("COUNT(*)"),
+    ).resolves.toBe(0);
+  });
+
   it("completes a feed check only after every discovered advisory job", async () => {
     respond({
       url: "https://osv.test/npm/modified_id.csv",

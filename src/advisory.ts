@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { effectiveAffectedEntries } from "./advisory-affected";
 import { ecosystemFamily } from "./advisory-jobs";
 import { describeError } from "./error-detail";
 import { compareVersion } from "./osv/comparator";
@@ -110,9 +111,10 @@ export async function resolveAdvisory(options: {
   );
   if (!response.ok) throw new Error(`OSV advisory failed (${response.status})`);
   const advisory = advisorySchema.parse(await response.json());
-  const affected = advisory.affected.filter(
+  const relevant = advisory.affected.filter(
     (entry) => ecosystemFamily(entry.package.ecosystem) === options.ecosystem,
   );
+  const affected = await effectiveAffectedEntries(options.database, relevant);
   const current = new Set(
     affected.map((entry) => `${entry.package.ecosystem}\u0000${entry.package.name}`),
   );

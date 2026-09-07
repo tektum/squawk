@@ -7,7 +7,7 @@ import {
   repositoryPath,
   type GitHubAppEnv,
 } from "./github";
-import { recoverTerminalRuns } from "./reconciliation-recovery";
+import { recoverTerminalRuns, type RecoveryOptions } from "./reconciliation-recovery";
 
 export type ReconciliationWorkerEnv = GitHubAppEnv & { readonly DB: D1Database };
 export type ReconciliationDispatchEnv = ReconciliationWorkerEnv & {
@@ -113,6 +113,7 @@ export async function dispatchReconciliation(
         },
         body: JSON.stringify({
           ref: row.dispatch_ref || "main",
+          return_run_details: true,
           inputs: {
             payload: JSON.stringify({
               schema_version: 2,
@@ -154,8 +155,9 @@ export async function dispatchReconciliation(
 export async function enqueueReconciliations(
   env: ReconciliationDispatchEnv,
   now = Date.now(),
+  recovery: RecoveryOptions = {},
 ): Promise<number> {
-  await recoverTerminalRuns(env);
+  await recoverTerminalRuns(env, recovery);
   const states = (
     await env.DB.prepare(
       `SELECT r.installation_id,r.repository_id,r.logical_image_ref,r.revision

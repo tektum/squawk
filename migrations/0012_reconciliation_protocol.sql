@@ -12,6 +12,14 @@ CREATE TABLE image_inventory_generations (
     REFERENCES github_sources(installation_id, repository_id)
 );
 
+
+CREATE TABLE reconciliation_refresh_cursor (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  installation_id TEXT,
+  repository_id TEXT,
+  logical_image_ref TEXT
+);
+INSERT INTO reconciliation_refresh_cursor (singleton) VALUES (1);
 CREATE TABLE advisory_feed_checks (
   checkpoint_id TEXT PRIMARY KEY CHECK (length(checkpoint_id) = 64 AND checkpoint_id NOT GLOB '*[^0-9a-f]*'),
   ecosystem TEXT NOT NULL,

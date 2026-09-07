@@ -23,6 +23,7 @@ describe("D1 migration contract", () => {
       "github_deliveries",
       "public_activity",
       "image_inventory_generations",
+      "reconciliation_refresh_cursor",
       "advisory_feed_checks",
       "image_reconciliation_state",
       "reconciliation_checkpoints",

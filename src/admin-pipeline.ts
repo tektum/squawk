@@ -14,7 +14,7 @@ export type JobFilters = {
 };
 
 export async function jobs(database: D1Database, tenantId: TenantId, filters: JobFilters) {
-  const [ingestion, advisories, dispatch, matching] = await Promise.all([
+  const [ingestion, advisories, dispatch, reconciliation, matching] = await Promise.all([
     database
       .prepare(`SELECT j.subject_digest, j.logical_image_ref, j.installation_id, j.repository_id,
         j.status, j.next_descriptor, j.saw_spdx, j.attempted_at, j.error, j.created_at
@@ -37,6 +37,15 @@ export async function jobs(database: D1Database, tenantId: TenantId, filters: Jo
       .bind(tenantId, filters.status, filters.status, filters.limit)
       .all(),
     database
+      .prepare(`SELECT r.delivery_id,r.logical_image_ref,r.target_revision,r.status,
+        r.workflow_run_id,r.attempt_id,r.attempted_at,r.error,r.created_at,r.acked_at
+      FROM reconciliation_deliveries r JOIN github_sources g
+        ON g.installation_id=r.installation_id AND g.repository_id=r.repository_id
+      WHERE g.org_id=? AND (? IS NULL OR r.status=?)
+      ORDER BY r.created_at DESC LIMIT ?`)
+      .bind(tenantId, filters.status, filters.status, filters.limit)
+      .all(),
+    database
       .prepare(`SELECT m.vuln_id, m.reason, m.created_at, c.package_name, c.ecosystem, c.version
       FROM matching_errors m JOIN components c ON c.id = m.component_id JOIN sboms s ON s.id = c.sbom_id
       WHERE s.org_id = ? ORDER BY m.created_at DESC LIMIT ?`)
@@ -47,6 +56,7 @@ export async function jobs(database: D1Database, tenantId: TenantId, filters: Jo
     ingestion: ingestion.results,
     advisories: advisories.results,
     dispatch: dispatch.results,
+    reconciliation: reconciliation.results,
     matching_errors: matching.results,
   };
 }

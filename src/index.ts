@@ -72,6 +72,20 @@ async function consumeDispatch(
   batch: MessageBatch,
   env: Parameters<typeof runScheduled>[0],
 ): Promise<void> {
+  if (env.DISPATCH_ENABLED === "false") {
+    for (const message of batch.messages) {
+      const parsed = dispatchMessageSchema.safeParse(message.body);
+      if (parsed.success)
+        await env.DB.prepare(
+          `DELETE FROM dispatch_deliveries
+           WHERE delivery_id=? AND status='pending' AND attempted_at IS NULL`,
+        )
+          .bind(parsed.data.deliveryId)
+          .run();
+      message.ack();
+    }
+    return;
+  }
   for (const message of batch.messages) {
     try {
       const accepted = await dispatchOne(env, dispatchMessageSchema.parse(message.body));

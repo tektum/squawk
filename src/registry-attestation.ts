@@ -93,7 +93,7 @@ export async function statementsForImage(
       token,
       "application/vnd.oci.image.index.v1+json",
       budget,
-      ghcrUrl === defaultGhcrUrl ? digest : undefined,
+      digest,
     ),
   );
   const platforms = new Map<"linux/amd64" | "linux/arm64", string>();
