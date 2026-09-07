@@ -3,6 +3,15 @@ import type { SubrequestBudget } from "./budget";
 import { statementSchema, WebhookError } from "./webhook-contract";
 
 const bundleMediaType = "application/vnd.dev.sigstore.bundle.v0.3+json";
+const imageIndexMediaTypes = [
+  "application/vnd.oci.image.index.v1+json",
+  "application/vnd.docker.distribution.manifest.list.v2+json",
+] as const;
+const imageManifestMediaTypes = [
+  "application/vnd.oci.image.manifest.v1+json",
+  "application/vnd.docker.distribution.manifest.v2+json",
+] as const;
+const subjectIndexAccept = imageIndexMediaTypes.join(", ");
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const descriptorSchema = z.object({
   artifactType: z.string().optional(),
@@ -11,11 +20,11 @@ const descriptorSchema = z.object({
 });
 const indexSchema = z.object({ manifests: z.array(descriptorSchema).max(500) });
 const subjectIndexSchema = z.object({
-  mediaType: z.literal("application/vnd.oci.image.index.v1+json"),
+  mediaType: z.enum(imageIndexMediaTypes),
   manifests: z
     .array(
       descriptorSchema.extend({
-        mediaType: z.literal("application/vnd.oci.image.manifest.v1+json"),
+        mediaType: z.enum(imageManifestMediaTypes),
         platform: z.object({ os: z.string(), architecture: z.string() }),
       }),
     )
@@ -92,7 +101,7 @@ export async function statementsForImage(
     await registryJson(
       new URL(`${base}/manifests/${digest}`),
       token,
-      "application/vnd.oci.image.index.v1+json",
+      subjectIndexAccept,
       budget,
       digest,
     ),
