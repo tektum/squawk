@@ -16,6 +16,7 @@ const jobSchema = z.object({
 const advisorySchema = z.object({
   id: z.string(),
   modified: z.string(),
+  withdrawn: z.string().datetime({ offset: true }).optional(),
   summary: z.string().optional(),
   severity: z.array(z.object({ score: z.string() })).optional(),
   affected: z.array(
@@ -111,9 +112,11 @@ export async function resolveAdvisory(options: {
   );
   if (!response.ok) throw new Error(`OSV advisory failed (${response.status})`);
   const advisory = advisorySchema.parse(await response.json());
-  const relevant = advisory.affected.filter(
-    (entry) => ecosystemFamily(entry.package.ecosystem) === options.ecosystem,
-  );
+  const relevant = advisory.withdrawn
+    ? []
+    : advisory.affected.filter(
+        (entry) => ecosystemFamily(entry.package.ecosystem) === options.ecosystem,
+      );
   const affected = await effectiveAffectedEntries(options.database, relevant);
   const current = new Set(
     affected.map((entry) => `${entry.package.ecosystem}\u0000${entry.package.name}`),
