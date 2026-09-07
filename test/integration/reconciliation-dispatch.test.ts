@@ -282,57 +282,58 @@ describe("reconciliation workflow dispatch", () => {
     expect(dispatches).toBe(1);
   });
 
-  it.each([403, 404, "network"])(
-    "isolates a permanent GitHub %s lookup failure",
-    async (failure) => {
-      await env.DB.batch([
-        env.DB.prepare(
-          `INSERT INTO reconciliation_deliveries
+  it.each([
+    [403, "failed"],
+    [404, "failed"],
+    ["network", "dispatched"],
+  ] as const)("isolates a GitHub %s lookup failure", async (failure, expectedStatus) => {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO reconciliation_deliveries
          (delivery_id,installation_id,repository_id,logical_image_ref,target_revision,status,
           workflow_run_id,attempt_id,attempted_at,created_at)
          VALUES (?,'123','9',?,1,'dispatched','77','attempt-77',1000,1000)`,
-        ).bind("a".repeat(64), logical),
-        env.DB.prepare(
-          `INSERT INTO reconciliation_deliveries
+      ).bind("a".repeat(64), logical),
+      env.DB.prepare(
+        `INSERT INTO reconciliation_deliveries
          (delivery_id,installation_id,repository_id,logical_image_ref,target_revision,status,
           workflow_run_id,attempt_id,attempted_at,created_at)
          VALUES (?,'123','9',?,1,'dispatched','78','attempt-78',1001,1001)`,
-        ).bind("b".repeat(64), `${logical}-peer`),
-      ]);
-      server.use(
-        http.post("https://api.github.com/app/installations/123/access_tokens", () =>
-          HttpResponse.json({ token: "installation-token" }, { status: 201 }),
-        ),
-        http.get("https://api.github.com/repositories/9", () =>
-          HttpResponse.json({ full_name: "owner/repo" }),
-        ),
-        http.get("https://api.github.com/repos/owner/repo/actions/runs/77", () =>
-          typeof failure === "number"
-            ? HttpResponse.json({ error: "gone" }, { status: failure })
-            : HttpResponse.error(),
-        ),
-        http.get("https://api.github.com/repos/owner/repo/actions/runs/78", () =>
-          HttpResponse.json({ status: "completed", conclusion: "failure" }),
-        ),
-      );
+      ).bind("b".repeat(64), `${logical}-peer`),
+    ]);
+    server.use(
+      http.post("https://api.github.com/app/installations/123/access_tokens", () =>
+        HttpResponse.json({ token: "installation-token" }, { status: 201 }),
+      ),
+      http.get("https://api.github.com/repositories/9", () =>
+        HttpResponse.json({ full_name: "owner/repo" }),
+      ),
+      http.get("https://api.github.com/repos/owner/repo/actions/runs/77", () =>
+        typeof failure === "number"
+          ? HttpResponse.json({ error: "gone" }, { status: failure })
+          : HttpResponse.error(),
+      ),
+      http.get("https://api.github.com/repos/owner/repo/actions/runs/78", () =>
+        HttpResponse.json({ status: "completed", conclusion: "failure" }),
+      ),
+    );
 
-      await recoverTerminalRuns(
-        {
-          DB: env.DB,
-          GH_APP_ID: "42",
-          GH_APP_PRIVATE_KEY: privateKey,
-        },
-        { budget: new SubrequestBudget(6) },
-      );
-      const rows = await env.DB.prepare(
-        "SELECT workflow_run_id,status FROM reconciliation_deliveries ORDER BY delivery_id",
-      ).all<{ workflow_run_id: string | null; status: string }>();
-      expect(rows.results).toEqual([
-        { workflow_run_id: "77", status: "failed" },
-        { workflow_run_id: null, status: "pending" },
-      ]);
-    },
-  );
+    await recoverTerminalRuns(
+      {
+        DB: env.DB,
+        GH_APP_ID: "42",
+        GH_APP_PRIVATE_KEY: privateKey,
+      },
+      { budget: new SubrequestBudget(6) },
+    );
+    const rows = await env.DB.prepare(
+      "SELECT workflow_run_id,status FROM reconciliation_deliveries ORDER BY delivery_id",
+    ).all<{ workflow_run_id: string | null; status: string }>();
+    expect(rows.results).toEqual([
+      { workflow_run_id: "77", status: expectedStatus },
+      { workflow_run_id: null, status: "pending" },
+    ]);
+  });
   it("stops recovery after a GitHub rate limit", async () => {
     await env.DB.batch([
       env.DB.prepare(

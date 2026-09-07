@@ -52,7 +52,8 @@ async function missingCandidate(
 ): Promise<CheckpointCandidate | null> {
   const row = await database
     .prepare(
-      `SELECT MAX(s.retired_at) AS retired_at FROM image_reconciliation_state r
+      `SELECT MAX(s.retired_at) AS retired_at,COUNT(r.logical_image_ref) AS matched
+       FROM image_reconciliation_state r
        LEFT JOIN sboms s ON s.installation_id=r.installation_id
          AND s.repository_id=r.repository_id AND s.logical_image_ref=r.logical_image_ref
        WHERE r.installation_id=? AND r.repository_id=? AND r.logical_image_ref=?
@@ -64,8 +65,8 @@ async function missingCandidate(
              AND a.logical_image_ref=r.logical_image_ref)`,
     )
     .bind(image.installation_id, image.repository_id, image.logical_image_ref)
-    .first<{ readonly retired_at: number | null }>();
-  if (!row) return null;
+    .first<{ readonly retired_at: number | null; readonly matched: number }>();
+  if (!row || row.matched === 0) return null;
   return {
     state: "blocked",
     reason: "retirement_unverified",

@@ -314,6 +314,25 @@ describe("reconciliation checkpoint state", () => {
       env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state").first("COUNT(*)"),
     ).resolves.toBe(26);
   });
+
+  it("ignores authoritative retirement evidence while the image is active", async () => {
+    await refreshReconciliationCheckpoints(env.DB, now);
+    await env.DB.prepare(
+      `INSERT INTO authoritative_retirements
+       (event_id,installation_id,repository_id,logical_image_ref,replacement_logical_image_ref,
+        replacement_published_at,replacement_run_url,retired_at,created_at)
+       VALUES ('active-event','123','9',?,?,1,'https://github.com/owner/repo/actions/runs/42',2,2)`,
+    )
+      .bind(logical, `ghcr.io/owner/demo@sha256:${"9".repeat(64)}`)
+      .run();
+
+    await expect(refreshRetirementCheckpoints(env.DB, now + 1)).resolves.toBe(0);
+    await expect(
+      env.DB.prepare("SELECT state || ':' || revision FROM image_reconciliation_state").first(
+        "state || ':' || revision",
+      ),
+    ).resolves.toBe("ready:1");
+  });
   it("emits retirement only from validated replacement evidence", async () => {
     await refreshReconciliationCheckpoints(env.DB, now);
     await env.DB.prepare("UPDATE sboms SET retired_at=?")

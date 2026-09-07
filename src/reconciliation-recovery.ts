@@ -129,7 +129,7 @@ export async function recoverTerminalRuns(
         await recordRecoveryFailure(env.DB, row, `GitHub ${error.status}`, terminal);
         continue;
       }
-      await recordRecoveryFailure(env.DB, row, "recovery lookup failed", true);
+      await recordRecoveryFailure(env.DB, row, "recovery lookup failed", false);
     }
   }
 }
