@@ -48,7 +48,7 @@ export function reconciliationPlan(components: readonly StoredComponent[]): {
     updates.push(`DELETE FROM dispatch_deliveries WHERE status IN ('pending','failed') AND ecosystem=${quote(component.ecosystem)} AND version=${quote(component.version)} AND package_name=(SELECT package_name FROM components WHERE id=${component.id}) AND logical_image_ref=(SELECT s.logical_image_ref FROM components c JOIN sboms s ON s.id=c.sbom_id WHERE c.id=${component.id});
 DELETE FROM findings WHERE component_id=${component.id};
 DELETE FROM matching_errors WHERE component_id=${component.id};
-UPDATE sboms SET backfill_status='pending',backfill_error=NULL WHERE retired_at IS NULL AND id=(SELECT sbom_id FROM components WHERE id=${component.id});
+UPDATE sboms SET backfill_status='pending',backfill_error=NULL,backfill_lease_sha256=NULL WHERE retired_at IS NULL AND id=(SELECT sbom_id FROM components WHERE id=${component.id});
 UPDATE components SET ecosystem=${quote(resolved.ecosystem)},matchable=${matchable},version=${quote(version)} WHERE id=${component.id};`);
   }
   return {
@@ -75,7 +75,7 @@ WHERE status='complete' AND EXISTS (
       OR EXISTS (SELECT 1 FROM matching_errors m WHERE m.component_id=c.id AND m.vuln_id=osv_advisory_jobs.advisory_id)
     )
 );
-UPDATE sboms SET backfill_status='pending',backfill_error=NULL WHERE retired_at IS NULL;`,
+UPDATE sboms SET backfill_status='pending',backfill_error=NULL,backfill_lease_sha256=NULL WHERE retired_at IS NULL;`,
   };
 }
 

@@ -43,6 +43,12 @@ async function backfillState() {
   ).first();
 }
 
+async function leaseIdentity() {
+  return env.DB.prepare("SELECT backfill_lease_sha256 FROM sboms WHERE id='lease'").first<string>(
+    "backfill_lease_sha256",
+  );
+}
+
 async function scanActivityCount() {
   return env.DB.prepare(
     "SELECT COUNT(*) AS count FROM public_activity WHERE kind='scan'",
@@ -61,7 +67,7 @@ describe("SBOM backfill lease ownership", () => {
     });
     await request.started;
     await env.DB.prepare(
-      "UPDATE sboms SET backfill_status='pending',backfill_error=NULL WHERE id='lease'",
+      "UPDATE sboms SET backfill_status='pending',backfill_error=NULL,backfill_lease_sha256=NULL WHERE id='lease'",
     ).run();
     request.release();
 
@@ -74,28 +80,51 @@ describe("SBOM backfill lease ownership", () => {
     await expect(scanActivityCount()).resolves.toBe(0);
   });
 
-  it("does not fail a newer running lease after its fetch fails", async () => {
-    const request = holdQueryBatch(503);
-    const backfill = backfillSbom({
+  it("does not fail a replacement lease claimed at the same timestamp", async () => {
+    const staleRequest = holdQueryBatch(503);
+    const staleBackfill = backfillSbom({
       database: env.DB,
       sbomId: "lease",
       osvApiUrl,
       osvBaseUrl: osvApiUrl,
       now: 1_000,
     });
-    await request.started;
+    await staleRequest.started;
+    const staleLease = await leaseIdentity();
+    expect(staleLease).toMatch(/^[a-f0-9]{64}$/);
     await env.DB.prepare(
-      "UPDATE sboms SET backfill_status='running',backfill_attempted_at=2000,backfill_error='newer result' WHERE id='lease'",
+      "UPDATE sboms SET backfill_status='pending',backfill_error=NULL,backfill_lease_sha256=NULL WHERE id='lease'",
     ).run();
-    request.release();
+    const replacementRequest = holdQueryBatch(200);
+    const replacementBackfill = backfillSbom({
+      database: env.DB,
+      sbomId: "lease",
+      osvApiUrl,
+      osvBaseUrl: osvApiUrl,
+      now: 1_000,
+    });
+    await replacementRequest.started;
+    const replacementLease = await leaseIdentity();
+    expect(replacementLease).toMatch(/^[a-f0-9]{64}$/);
+    expect(replacementLease).not.toBe(staleLease);
+    staleRequest.release();
 
-    await expect(backfill).rejects.toThrow("OSV querybatch failed (503)");
+    await expect(staleBackfill).rejects.toThrow("OSV querybatch failed (503)");
     await expect(backfillState()).resolves.toEqual({
       backfill_status: "running",
-      backfill_attempted_at: 2_000,
-      backfill_error: "newer result",
+      backfill_attempted_at: 1_000,
+      backfill_error: null,
     });
     await expect(scanActivityCount()).resolves.toBe(0);
+    replacementRequest.release();
+    await expect(replacementBackfill).resolves.toBeUndefined();
+    await expect(backfillState()).resolves.toEqual({
+      backfill_status: "complete",
+      backfill_attempted_at: 1_000,
+      backfill_error: null,
+    });
+    await expect(leaseIdentity()).resolves.toBeNull();
+    await expect(scanActivityCount()).resolves.toBe(1);
   });
 
   it("completes and records activity while it still owns the lease", async () => {
@@ -114,6 +143,7 @@ describe("SBOM backfill lease ownership", () => {
       backfill_attempted_at: 3_000,
       backfill_error: null,
     });
+    await expect(leaseIdentity()).resolves.toBeNull();
     await expect(scanActivityCount()).resolves.toBe(1);
   });
 });
