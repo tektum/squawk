@@ -15,6 +15,7 @@ export type FailureCase =
   | "ignored"
   | "index-only"
   | "installation"
+  | "index-digest"
   | "mixed-referrers"
   | "many-attestations"
   | "noisy-index"
@@ -54,12 +55,12 @@ export async function githubWebhookFixture(
   const component =
     failure === "vulnerable" ? { componentName: "lodash", componentVersion: "4.17.20" } : {};
   const statements = [
-    statement("amd64", AMD64_DIGEST, {
+    statement("amd64", `sha256:${"7".repeat(64)}`, {
       ...component,
       indexOnly: failure === "index-only",
       wrongSubject: failure === "subject",
     }),
-    statement("arm64", ARM64_DIGEST, {
+    statement("arm64", `sha256:${"8".repeat(64)}`, {
       ...component,
       ...(failure === "changed" ? { componentVersion: "2.0.0" } : {}),
       indexOnly: failure === "index-only",
@@ -124,6 +125,24 @@ export async function githubWebhookFixture(
     http.get("https://ghcr.io/v2/owner/demo/manifests/:reference", ({ params }) => {
       // biome-ignore lint/complexity/useLiteralKeys: params is an index-signature map.
       const reference = String(params["reference"]);
+      if (reference === INDEX_DIGEST)
+        return HttpResponse.json({
+          schemaVersion: 2,
+          mediaType: "application/vnd.oci.image.index.v1+json",
+          ...(failure === "index-digest" ? { annotations: { tampered: "true" } } : {}),
+          manifests: [
+            {
+              digest: AMD64_DIGEST,
+              mediaType: "application/vnd.oci.image.manifest.v1+json",
+              platform: { os: "linux", architecture: "amd64" },
+            },
+            {
+              digest: ARM64_DIGEST,
+              mediaType: "application/vnd.oci.image.manifest.v1+json",
+              platform: { os: "linux", architecture: "arm64" },
+            },
+          ],
+        });
       if (!attestationsVisible.value && reference === `sha256-${INDEX_DIGEST.slice(7)}`)
         return HttpResponse.json({ error: "not found" }, { status: 404 });
       if (reference === `sha256-${INDEX_DIGEST.slice(7)}`)
@@ -144,7 +163,7 @@ export async function githubWebhookFixture(
                   }))
                 : []),
             ...(failure === "many-attestations"
-              ? Array.from({ length: 10 }, () => primaryAttestation)
+              ? [...Array.from({ length: 12 }, () => primaryAttestation), ...attestations]
               : failure === "duplicates"
                 ? [...attestations, ...attestations]
                 : attestations

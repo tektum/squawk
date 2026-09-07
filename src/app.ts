@@ -15,6 +15,12 @@ import { safeIssues } from "./error-detail";
 import { inventoryResponse } from "./inventory";
 import { registerPublicRoutes } from "./public-api";
 import { appendVex, listFindings, retireSbom } from "./repository";
+import {
+  ActionsAuthenticationError,
+  ActionsAuthorizationError,
+  registerReconciliationRoutes,
+} from "./reconciliation-api";
+import { releaseQuarantinedReconciliation } from "./reconciliation-operations";
 import { PredicateError } from "./sbom";
 import { runScheduled } from "./scheduled";
 import { httpsRedirect, insecurePublicRequest } from "./transport";
@@ -75,6 +81,8 @@ app.post("/webhooks/github", async (context) => {
   }
 });
 
+registerReconciliationRoutes(app);
+
 app.use("/v1/*", async (context, next) => {
   const principal = await authenticate(context.req.header("Authorization"), {
     projectId: context.env.DESCOPE_PROJECT_ID,
@@ -94,6 +102,35 @@ app.post("/v1/operations/scheduled", async (context) => {
   if (!principal.userId) throw new AuthorizationError("human identity required");
   await runScheduled(context.env);
   return context.body(null, 204);
+});
+
+app.post("/v1/orgs/:id/reconciliations/:deliveryId/release", async (context) => {
+  const principal = principalForOrg(context.get("principal"), context.req.param("id"));
+  requireCapability(principal, "operations.run");
+  if (!principal.userId) throw new AuthorizationError("human identity required");
+  if (context.env.DISPATCH_ENABLED === "true")
+    return context.json({ error: "pause dispatch before releasing quarantine" }, 409);
+  const deliveryId = z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .parse(context.req.param("deliveryId"));
+  const input = z
+    .object({
+      attempt_id: z.string().uuid().nullable().optional(),
+      workflow_run_id: z.string().regex(/^\d+$/).nullable().optional(),
+    })
+    .strict()
+    .parse(await context.req.json());
+  const released = await releaseQuarantinedReconciliation(
+    context.env.DB,
+    principal.tenantId,
+    deliveryId,
+    input.attempt_id ?? null,
+    input.workflow_run_id ?? null,
+  );
+  return released
+    ? context.body(null, 204)
+    : context.json({ error: "quarantined reconciliation not found" }, 409);
 });
 
 app.delete("/v1/sboms/:id", async (context) => {
@@ -148,6 +185,9 @@ app.get("/v1/orgs/:id/findings", async (context) => {
 });
 
 app.onError((error, context) => {
+  if (error instanceof ActionsAuthenticationError)
+    return context.json({ error: "unauthorized" }, 401);
+  if (error instanceof ActionsAuthorizationError) return context.json({ error: "forbidden" }, 403);
   if (error instanceof AuthenticationError) return context.json({ error: "unauthorized" }, 401);
   if (error instanceof AuthorizationError) return context.json({ error: "forbidden" }, 403);
   if (error instanceof WebhookError) return context.json({ error: error.message }, error.status);

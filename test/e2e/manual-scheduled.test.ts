@@ -61,6 +61,42 @@ describe("manual scheduled operation", () => {
       ),
     ).resolves.toBe("complete");
   });
+
+  it("releases only an exact quarantined attempt while dispatch is paused", async () => {
+    const deliveryId = "a".repeat(64);
+    const attemptId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO github_sources (installation_id,repository_id,org_id,dispatch_workflow,dispatch_ref,created_at) VALUES ('1','2','tenant','monitor.yaml','main',0)",
+      ),
+      env.DB.prepare(
+        `INSERT INTO reconciliation_deliveries
+         (delivery_id,installation_id,repository_id,logical_image_ref,target_revision,status,
+          attempt_id,attempted_at,error,created_at)
+         VALUES (?,'1','2',?,1,'pending',?,1,'workflow dispatch outcome unknown',1)`,
+      ).bind(deliveryId, `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`, attemptId),
+    ]);
+    const bindings = await authenticatedBindings(["operations.run"], "operator");
+    const request = (dispatchEnabled: string) =>
+      worker.fetch(
+        new Request(`https://squawk.test/v1/orgs/tenant/reconciliations/${deliveryId}/release`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${bindings.token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ attempt_id: attemptId }),
+        }),
+        { ...bindings.env, DISPATCH_ENABLED: dispatchEnabled },
+        createExecutionContext(),
+      );
+
+    expect((await request("true")).status).toBe(409);
+    expect((await request("false")).status).toBe(204);
+    await expect(
+      env.DB.prepare("SELECT attempt_id FROM reconciliation_deliveries").first("attempt_id"),
+    ).resolves.toBeNull();
+  });
 });
 
 async function authenticatedBindings(permissions: readonly string[], subject: string | undefined) {

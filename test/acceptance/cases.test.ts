@@ -323,8 +323,8 @@ const cases: readonly AcceptanceCase[] = [
         parsePredicate({
           bomFormat: "CycloneDX",
           components: [{ name: "p", version: "1", purl: "pkg:deb/wolfi/p@1" }],
-        })[0]?.ecosystem,
-      ).toBe("Debian"),
+        })[0],
+      ).toMatchObject({ ecosystem: "unknown:deb", matchable: false }),
   ],
   [
     "R8-1",

@@ -10,6 +10,27 @@ export type GitHubAppEnv = {
 };
 
 export const defaultGitHubApiUrl = "https://api.github.com";
+const repositorySchema = z.object({ full_name: z.string().regex(/^[^/]+\/[^/]+$/) });
+
+export async function repositoryPath(
+  apiUrl: string,
+  repositoryId: string,
+  token: string,
+  budget?: SubrequestBudget,
+): Promise<string> {
+  budget?.take();
+  const response = await fetch(`${apiUrl}/repositories/${repositoryId}`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      "user-agent": "squawk",
+      "x-github-api-version": "2026-03-10",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new GitHubApiError(response.status);
+  return repositorySchema.parse(await response.json()).full_name;
+}
 
 type TokenRequest = {
   readonly installationId: string;

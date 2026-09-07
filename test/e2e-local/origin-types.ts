@@ -82,6 +82,7 @@ export const queryRequestSchema = z.object({
 });
 export const dispatchBodySchema = z.object({
   ref: z.string(),
+  return_run_details: z.literal(true).optional(),
   inputs: z.object({ payload: z.string() }),
 });
 

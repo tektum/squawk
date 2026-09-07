@@ -123,6 +123,21 @@ async function buildRegistry(fixtures: LoadedFixtures): Promise<Registry> {
       });
     }
     manifests.set(
+      `${imagePath}/${image.indexDigest}`,
+      jsonBytes({
+        schemaVersion: 2,
+        mediaType: indexMediaType,
+        manifests: image.platforms.map((platform) => ({
+          digest: platform.manifestDigest,
+          mediaType: manifestMediaType,
+          platform: {
+            os: platform.platform.split("/")[0],
+            architecture: platform.platform.split("/")[1],
+          },
+        })),
+      }),
+    );
+    manifests.set(
       `${imagePath}/sha256-${image.indexDigest.slice(7)}`,
       jsonBytes({ schemaVersion: 2, mediaType: indexMediaType, manifests: descriptors }),
     );
@@ -162,7 +177,9 @@ async function githubRoute(request: Request, path: string, state: GitHubState): 
     return problem(400, "invalid dispatch payload", path);
   }
   state.log.push({ owner, repo, workflow, ref: parsed.data.ref, payload });
-  return new Response(null, { status: 204 });
+  return parsed.data.return_run_details
+    ? Response.json({ workflow_run_id: state.log.length, run_url: "local", html_url: "local" })
+    : new Response(null, { status: 204 });
 }
 
 function registryRoute(request: Request, path: string, registry: Registry): Routed {

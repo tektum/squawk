@@ -2,7 +2,7 @@
   "vulnerable": {
     "name": "wolfi-base",
     "image": "ghcr.io/tektum/wolfi-base",
-    "indexDigest": "sha256:3f800eaa63c6789c4fb67da9a267dc1639074b1cb5e64ef63142b66e6fc10060",
+    "indexDigest": "sha256:d3e0738bcbc27446439ab8cc97de1c46dac03e192294e22656031782ef18ff28",
     "platforms": [
       {
         "platform": "linux/amd64",
@@ -77,7 +77,7 @@
   "clean": {
     "name": "alertmanager",
     "image": "ghcr.io/tektum/alertmanager",
-    "indexDigest": "sha256:e4295dbb13247e76d054dc9d323a424d68b16390b3296e8426ee826561d8f312",
+    "indexDigest": "sha256:cac22ff268e7e8c1d3b1ac14010d2d6e9a57eb22e13cd958e653bb9406360260",
     "platforms": [
       {
         "platform": "linux/amd64",

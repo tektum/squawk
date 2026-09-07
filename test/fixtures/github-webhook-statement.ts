@@ -1,5 +1,6 @@
 export const AMD64_DIGEST = `sha256:${"a".repeat(64)}`;
-export const INDEX_DIGEST = `sha256:${"b".repeat(64)}`;
+export const INDEX_DIGEST =
+  "sha256:7d23843ca3bb1def6f1484f91239f3c8bb21c84a14c626625e3c44a359617d73";
 export const ARM64_DIGEST = `sha256:${"c".repeat(64)}`;
 
 type StatementOptions = {
@@ -37,6 +38,7 @@ export function statement(
               SPDXID: rootId,
               name: `demo-${platform}`,
               versionInfo: digest,
+              primaryPackagePurpose: "CONTAINER",
               externalRefs: [
                 {
                   referenceType: "purl",
@@ -53,7 +55,7 @@ export function statement(
               externalRefs: [
                 {
                   referenceType: "purl",
-                  referenceLocator: `pkg:npm/${componentName}@${componentVersion}`,
+                  referenceLocator: `pkg:npm/${componentName}@${componentVersion}?arch=${platform}`,
                 },
               ],
             },

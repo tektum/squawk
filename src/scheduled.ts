@@ -4,7 +4,10 @@ import { backfillLeaseMilliseconds, backfillSbom } from "./backfill";
 import { RunDeadline, SubrequestBudget } from "./budget";
 import { type DispatchEnv, type DispatchQueueEnv, enqueueDispatch } from "./dispatch";
 import { describeError } from "./error-detail";
-import { discoverAdvisories, requeueAdvisoryJobs } from "./sync";
+import { enqueueReconciliations } from "./reconciliation-dispatch";
+import { refreshReconciliationCheckpoints } from "./reconciliation-state";
+import { refreshRetirementCheckpoints } from "./retirement-checkpoint";
+import { discoverAdvisories, refreshFeedChecks, requeueAdvisoryJobs } from "./sync";
 import { type IngestionJob, ingestPendingImage } from "./webhook-ingestion";
 
 type ScheduledEnv = DispatchEnv &
@@ -186,6 +189,7 @@ async function executeScheduled(
           ecosystem,
           osvBaseUrl: env.OSV_BASE_URL,
           queue: env.OSV_ADVISORY_JOBS,
+          now,
         });
       } catch (error) {
         console.error("Scheduled OSV discovery failed", { ecosystem, error: describeError(error) });
@@ -202,7 +206,21 @@ async function executeScheduled(
   } catch (error) {
     console.error("Scheduled advisory requeue failed", { error: describeError(error) });
   }
-  await runDispatchStage(env, now);
+  if (deadline.expired) return;
+  for (const [stage, run] of [
+    ["advisory feed checks", () => refreshFeedChecks(env.DB, now)],
+    ["reconciliation checkpoints", () => refreshReconciliationCheckpoints(env.DB, now, deadline)],
+    ["retirement checkpoints", () => refreshRetirementCheckpoints(env.DB, now, deadline)],
+  ] as const) {
+    if (deadline.expired) break;
+    try {
+      await run();
+    } catch (error) {
+      console.error(`Scheduled ${stage} refresh failed`, { error: describeError(error) });
+    }
+  }
+  if (deadline.expired) return;
+  await runDispatchStage(env, now, budget, deadline);
 }
 
 /**
@@ -213,10 +231,20 @@ async function executeScheduled(
  * Each message then dispatches in its own invocation with its own allowance, and the queue
  * owns retries, backoff and the dead-letter path.
  */
-export async function runDispatchStage(env: ScheduledEnv, now: number): Promise<void> {
+export async function runDispatchStage(
+  env: ScheduledEnv,
+  now: number,
+  budget = new SubrequestBudget(6),
+  deadline?: RunDeadline,
+): Promise<void> {
   if (env.DISPATCH_ENABLED !== "true") return;
   try {
-    const enqueued = await enqueueDispatch(env, now);
+    const findings = await enqueueDispatch(env, now);
+    const reconciliations = await enqueueReconciliations(env, now, {
+      budget,
+      ...(deadline ? { deadline } : {}),
+    });
+    const enqueued = findings + reconciliations;
     // 'pending' means work is now owned by the queue; 'ignored' means there was none.
     await recordActivity(env.DB, "dispatch", enqueued > 0 ? "pending" : "ignored", now);
   } catch (error) {

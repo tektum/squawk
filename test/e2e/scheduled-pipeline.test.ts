@@ -7,6 +7,7 @@ import { dispatchOne } from "../../src/dispatch-worker";
 import { runDispatchStage, runScheduled } from "../../src/scheduled";
 import { drainQueue, recordingQueue } from "../queue";
 import { githubWebhookFixture, INSTALLATION_ID, REPOSITORY_ID } from "../fixtures/github-webhook";
+import { INDEX_DIGEST } from "../fixtures/github-webhook-statement";
 import { respond } from "../http";
 import { server } from "../server";
 
@@ -45,6 +46,13 @@ describe("durable multi-platform dispatch", () => {
   it("sends one stable delivery and marks both findings", async () => {
     const pair = await generateKeyPair("RS256", { extractable: true });
     const privateKey = await exportPKCS8(pair.privateKey);
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (3,'sbom-0','demo','npm','1.5.0','pkg:npm/demo@1.5.0?duplicate=true',1)",
+      ),
+      env.DB.prepare("INSERT INTO findings VALUES ('tenant',3,'OSV-1',0,NULL)"),
+    ]);
+    let dispatchedPayload: { inputs?: { payload?: string } } | undefined;
     respond({
       method: "POST",
       url: "https://api.github.com/app/installations/123/access_tokens",
@@ -56,11 +64,15 @@ describe("durable multi-platform dispatch", () => {
       status: 200,
       body: { full_name: "owner/repo" },
     });
-    respond({
-      method: "POST",
-      url: "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
-      status: 204,
-    });
+    server.use(
+      http.post(
+        "https://api.github.com/repos/owner/repo/actions/workflows/monitor.yaml/dispatches",
+        async ({ request }) => {
+          dispatchedPayload = (await request.json()) as { inputs?: { payload?: string } };
+          return new HttpResponse(null, { status: 204 });
+        },
+      ),
+    );
     const producer = recordingQueue();
     const dispatchEnv = {
       DB: env.DB,
@@ -92,6 +104,16 @@ describe("durable multi-platform dispatch", () => {
       dispatchEnv,
     );
     expect(drained).toEqual({ acked: 1, retried: 0 });
+    expect(JSON.parse(dispatchedPayload?.inputs?.payload ?? "{}").platforms).toEqual([
+      {
+        platform: "linux/amd64",
+        image_ref: `ghcr.io/x@sha256:${"1".repeat(64)}`,
+      },
+      {
+        platform: "linux/arm64",
+        image_ref: `ghcr.io/x@sha256:${"2".repeat(64)}`,
+      },
+    ]);
     await expect(
       env.DB.prepare(
         "SELECT COUNT(*) AS count FROM dispatch_deliveries WHERE status='accepted'",
@@ -101,9 +123,68 @@ describe("durable multi-platform dispatch", () => {
       env.DB.prepare(
         "SELECT COUNT(*) AS count FROM findings WHERE dispatched_at IS NOT NULL",
       ).first<number>("count"),
-    ).resolves.toBe(2);
+    ).resolves.toBe(3);
     // The group is dispatched, so a later pass has nothing to enqueue.
     expect(await enqueueDispatch(dispatchEnv, 2000)).toBe(0);
+  });
+
+  it("stops legacy finding enqueue after source cutover", async () => {
+    await env.DB.prepare(
+      "UPDATE github_sources SET dispatch_schema_version=2 WHERE installation_id='123' AND repository_id='9'",
+    ).run();
+    const producer = recordingQueue();
+
+    await expect(
+      enqueueDispatch({
+        DB: env.DB,
+        FINDING_DISPATCH: producer.queue,
+      }),
+    ).resolves.toBe(0);
+    expect(producer.sent).toEqual([]);
+  });
+
+  it("drops a queued legacy claim after source cutover", async () => {
+    const producer = recordingQueue();
+    const bindings = {
+      DB: env.DB,
+      GH_APP_ID: "",
+      GH_APP_INSTALLATION_ID: "",
+      GH_APP_PRIVATE_KEY: "",
+      FINDING_DISPATCH: producer.queue,
+    };
+    await enqueueDispatch(bindings, 1_000);
+    const message = dispatchMessageSchema.parse(producer.sent[0]?.body);
+    await env.DB.prepare(
+      "UPDATE github_sources SET dispatch_schema_version=2 WHERE installation_id='123' AND repository_id='9'",
+    ).run();
+
+    await expect(dispatchOne(bindings, message, 2_000)).resolves.toBe(true);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM dispatch_deliveries").first("COUNT(*)"),
+    ).resolves.toBe(0);
+  });
+
+  it("acknowledges queued work without dispatching while paused", async () => {
+    const producer = recordingQueue();
+    const bindings = {
+      DB: env.DB,
+      GH_APP_ID: "",
+      GH_APP_INSTALLATION_ID: "",
+      GH_APP_PRIVATE_KEY: "",
+      FINDING_DISPATCH: producer.queue,
+      DISPATCH_ENABLED: "false",
+    };
+    await enqueueDispatch(bindings, 1_000);
+    const drained = await drainQueue(
+      "squawk-finding-dispatch",
+      producer.sent.map(({ body }) => body),
+      bindings,
+    );
+
+    expect(drained).toEqual({ acked: 1, retried: 0 });
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM dispatch_deliveries").first("COUNT(*)"),
+    ).resolves.toBe(0);
   });
 
   it("atomically leases a claim before concurrent queue deliveries can POST", async () => {
@@ -262,6 +343,41 @@ describe("durable multi-platform dispatch", () => {
     await expect(
       env.DB.prepare("SELECT COUNT(*) AS count FROM dispatch_deliveries").first<number>("count"),
     ).resolves.toBe(0);
+  });
+
+  it("continues to dispatch when one checkpoint refresh fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const producer = recordingQueue();
+    respond({ url: "https://osv.test/ecosystems.txt", status: 200, text: "npm\n" });
+    await env.DB.prepare(
+      `CREATE TRIGGER fail_checkpoint_refresh BEFORE INSERT ON reconciliation_checkpoints
+       BEGIN SELECT RAISE(FAIL,'injected checkpoint refresh failure'); END`,
+    ).run();
+    try {
+      await runScheduled(
+        {
+          ...env,
+          GH_APP_ID: "",
+          GH_APP_INSTALLATION_ID: "",
+          GH_APP_PRIVATE_KEY: "",
+          OSV_API_URL: "https://api.osv.test",
+          OSV_BASE_URL: "https://osv.test",
+          OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+          FINDING_DISPATCH: producer.queue,
+          DISPATCH_ENABLED: "true",
+        },
+        2_000,
+      );
+    } finally {
+      await env.DB.prepare("DROP TRIGGER fail_checkpoint_refresh").run();
+    }
+    expect(producer.sent).toHaveLength(1);
+    expect(error).toHaveBeenCalledWith(
+      "checkpoint refresh failed",
+      `ghcr.io/x@sha256:${"a".repeat(64)}`,
+      expect.any(String),
+    );
+    error.mockRestore();
   });
 
   it("records the enqueue outcome so a run that queued work is distinguishable", async () => {
@@ -594,6 +710,11 @@ describe("delayed GitHub attestation ingestion", () => {
     )
       .bind(String(INSTALLATION_ID), String(REPOSITORY_ID), "tenant", "monitor.yaml", "main")
       .run();
+    respond({
+      url: "https://osv.test/npm/modified_id.csv",
+      status: 200,
+      text: "modified,id\n1970-01-01T00:00:01.000Z,OSV-old\n",
+    });
   });
 
   it("ingests a pending image once attestations become visible", async () => {
@@ -603,10 +724,10 @@ describe("delayed GitHub attestation ingestion", () => {
       "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,delivery_id,deployment_id,status,created_at) VALUES (?,?,?,?,?,?,'pending',0)",
     )
       .bind(
-        `sha256:${"b".repeat(64)}`,
+        INDEX_DIGEST,
         String(INSTALLATION_ID),
         String(REPOSITORY_ID),
-        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+        `ghcr.io/owner/demo@${INDEX_DIGEST}`,
         crypto.randomUUID(),
         "789",
       )
@@ -644,10 +765,10 @@ describe("delayed GitHub attestation ingestion", () => {
       "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,created_at) VALUES (?,?,?,?, 'pending',0)",
     )
       .bind(
-        `sha256:${"b".repeat(64)}`,
+        INDEX_DIGEST,
         String(INSTALLATION_ID),
         String(REPOSITORY_ID),
-        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+        `ghcr.io/owner/demo@${INDEX_DIGEST}`,
       )
       .run();
     await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 2000)").run();
@@ -667,11 +788,31 @@ describe("delayed GitHub attestation ingestion", () => {
     );
 
     await expect(
+      env.DB.prepare("SELECT status FROM github_ingestion_jobs").first("status"),
+    ).resolves.toBe("pending");
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)"),
+    ).resolves.toBe(1);
+
+    await runScheduled(
+      {
+        ...env,
+        ...fixture.bindings,
+        GH_APP_ID: "",
+        GH_APP_INSTALLATION_ID: "",
+        GH_APP_PRIVATE_KEY: "",
+        OSV_API_URL: "https://api.osv.test",
+        OSV_BASE_URL: "https://osv.test",
+        OSV_ADVISORY_JOBS: { sendBatch: async () => undefined } as unknown as Queue,
+      },
+      2_000 + 16 * 60_000,
+    );
+    await expect(
       env.DB.prepare("SELECT COUNT(*) FROM github_ingestion_jobs").first<number>("COUNT(*)"),
     ).resolves.toBe(0);
     await expect(
       env.DB.prepare("SELECT COUNT(*) FROM sboms").first<number>("COUNT(*)"),
-    ).resolves.toBe(1);
+    ).resolves.toBe(2);
   });
 
   it("finds SPDX bundles after unrelated empty referrers", async () => {
@@ -680,10 +821,10 @@ describe("delayed GitHub attestation ingestion", () => {
       "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,created_at) VALUES (?,?,?,?, 'pending',0)",
     )
       .bind(
-        `sha256:${"b".repeat(64)}`,
+        INDEX_DIGEST,
         String(INSTALLATION_ID),
         String(REPOSITORY_ID),
-        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+        `ghcr.io/owner/demo@${INDEX_DIGEST}`,
       )
       .run();
     await env.DB.prepare("INSERT INTO osv_ecosystems VALUES ('npm', 2000)").run();
@@ -717,10 +858,10 @@ describe("delayed GitHub attestation ingestion", () => {
       env.DB.prepare(
         "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,attempted_at,created_at) VALUES (?,?,?,?, 'failed',?,0)",
       ).bind(
-        `sha256:${"b".repeat(64)}`,
+        INDEX_DIGEST,
         String(INSTALLATION_ID),
         String(REPOSITORY_ID),
-        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+        `ghcr.io/owner/demo@${INDEX_DIGEST}`,
         1_000,
       ),
       env.DB.prepare(
@@ -751,7 +892,7 @@ describe("delayed GitHub attestation ingestion", () => {
     const failed = await env.DB.prepare(
       "SELECT error FROM github_ingestion_jobs WHERE subject_digest=?",
     )
-      .bind(`sha256:${"b".repeat(64)}`)
+      .bind(INDEX_DIGEST)
       .first<{ readonly error: string | null }>();
     expect(failed?.error).toMatch(/ZodError: \[/);
     await expect(
@@ -762,7 +903,7 @@ describe("delayed GitHub attestation ingestion", () => {
     expect(error).toHaveBeenCalledWith(
       "Scheduled GitHub ingestion failed",
       expect.objectContaining({
-        subjectDigest: `sha256:${"b".repeat(64)}`,
+        subjectDigest: INDEX_DIGEST,
       }),
     );
     error.mockRestore();
@@ -774,10 +915,10 @@ describe("delayed GitHub attestation ingestion", () => {
       env.DB.prepare(
         "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,created_at) VALUES (?,?,?,?, 'pending',0)",
       ).bind(
-        `sha256:${"b".repeat(64)}`,
+        INDEX_DIGEST,
         String(INSTALLATION_ID),
         String(REPOSITORY_ID),
-        `ghcr.io/owner/demo@sha256:${"b".repeat(64)}`,
+        `ghcr.io/owner/demo@${INDEX_DIGEST}`,
       ),
       env.DB.prepare(
         "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at) VALUES ('starved','tenant','image','logical','linux/amd64','digest','pending',0)",
