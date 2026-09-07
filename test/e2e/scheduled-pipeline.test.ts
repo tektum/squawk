@@ -373,8 +373,9 @@ describe("durable multi-platform dispatch", () => {
     }
     expect(producer.sent).toHaveLength(1);
     expect(error).toHaveBeenCalledWith(
-      "Scheduled reconciliation checkpoints refresh failed",
-      expect.objectContaining({ error: expect.any(String) }),
+      "checkpoint refresh failed",
+      `ghcr.io/x@sha256:${"a".repeat(64)}`,
+      expect.any(String),
     );
     error.mockRestore();
   });

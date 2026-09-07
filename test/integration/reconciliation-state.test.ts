@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildInventoryCandidate } from "../../src/inventory-checkpoint";
 import {
   currentInventoryGeneration,
@@ -233,6 +233,60 @@ describe("reconciliation checkpoint state", () => {
     ).resolves.toBe("feed_stale");
   });
 
+  it("does not revise inventory for an unchanged feed freshness poll or old-row retention", async () => {
+    await env.DB.prepare(
+      "INSERT INTO advisory_feed_checks (checkpoint_id,ecosystem,cursor_modified_at,checked_at,completed_at,discovery_complete,status) VALUES (?,'Ubuntu','2026-09-05T00:00:00Z',?,?,1,'complete')",
+    )
+      .bind("8".repeat(64), now - 4_000, now - 3_000)
+      .run();
+    await refreshReconciliationCheckpoints(env.DB, now);
+    const generation = await currentInventoryGeneration(env.DB, source);
+
+    await env.DB.prepare(
+      "UPDATE advisory_feed_checks SET checked_at=?,completed_at=? WHERE checkpoint_id=?",
+    )
+      .bind(now + 1_000, now + 1_000, "f".repeat(64))
+      .run();
+    await env.DB.prepare("DELETE FROM advisory_feed_checks WHERE checkpoint_id=?")
+      .bind("8".repeat(64))
+      .run();
+
+    await expect(currentInventoryGeneration(env.DB, source)).resolves.toBe(generation);
+    await expect(refreshReconciliationCheckpoints(env.DB, now + 1_000)).resolves.toBe(0);
+    await expect(
+      env.DB.prepare("SELECT revision FROM image_reconciliation_state").first("revision"),
+    ).resolves.toBe(1);
+  });
+
+  it("advances past one image whose checkpoint write fails", async () => {
+    const next = `ghcr.io/owner/z-demo@sha256:${"9".repeat(64)}`;
+    await env.DB.prepare(
+      `INSERT INTO sboms
+       (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,
+        created_at,installation_id,repository_id)
+       VALUES ('next','tenant',? ,?,'linux/amd64',?,'complete',1,'123','9')`,
+    )
+      .bind(next, next, "6".repeat(64))
+      .run();
+    await env.DB.prepare(
+      `CREATE TRIGGER fail_first_checkpoint BEFORE INSERT ON reconciliation_checkpoints
+       WHEN NEW.logical_image_ref='${logical}'
+       BEGIN SELECT RAISE(FAIL,'injected image failure'); END`,
+    ).run();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await refreshReconciliationCheckpoints(env.DB, now);
+    } finally {
+      await env.DB.prepare("DROP TRIGGER fail_first_checkpoint").run();
+      error.mockRestore();
+    }
+
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state WHERE logical_image_ref=?")
+        .bind(next)
+        .first("COUNT(*)"),
+    ).resolves.toBe(1);
+  });
   it("advances a durable cursor across bounded refresh pages", async () => {
     await env.DB.batch(
       Array.from({ length: 25 }, (_, index) => {
@@ -297,5 +351,75 @@ describe("reconciliation checkpoint state", () => {
       authoritative_source_event_id: "retirement-event",
       replacement: { logical_image_ref: `ghcr.io/owner/demo@sha256:${"9".repeat(64)}` },
     });
+  });
+
+  it("continues retirement refresh after one image fails", async () => {
+    const second = `ghcr.io/owner/z-retired@sha256:${"8".repeat(64)}`;
+    await refreshReconciliationCheckpoints(env.DB, now);
+    await env.DB.prepare("UPDATE sboms SET retired_at=?")
+      .bind(now + 1)
+      .run();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO authoritative_retirements
+         (event_id,installation_id,repository_id,logical_image_ref,replacement_logical_image_ref,
+          replacement_published_at,replacement_run_url,retired_at,created_at)
+         VALUES ('first','123','9',?,?,1,'https://github.com/owner/repo/actions/runs/41',2,2)`,
+      ).bind(logical, `ghcr.io/owner/demo@sha256:${"7".repeat(64)}`),
+      env.DB.prepare(
+        `INSERT INTO authoritative_retirements
+         (event_id,installation_id,repository_id,logical_image_ref,replacement_logical_image_ref,
+          replacement_published_at,replacement_run_url,retired_at,created_at)
+         VALUES ('second','123','9',?,?,1,'https://github.com/owner/repo/actions/runs/42',2,2)`,
+      ).bind(second, `ghcr.io/owner/z-retired@sha256:${"9".repeat(64)}`),
+      env.DB.prepare(
+        `CREATE TRIGGER fail_first_retirement BEFORE INSERT ON reconciliation_checkpoints
+         WHEN NEW.logical_image_ref='${logical}'
+         BEGIN SELECT RAISE(FAIL,'injected retirement failure'); END`,
+      ),
+    ]);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await refreshRetirementCheckpoints(env.DB, now + 1);
+    } finally {
+      await env.DB.prepare("DROP TRIGGER fail_first_retirement").run();
+      error.mockRestore();
+    }
+
+    await expect(
+      env.DB.prepare(
+        "SELECT COUNT(*) FROM image_reconciliation_state WHERE logical_image_ref=? AND state='ready'",
+      )
+        .bind(second)
+        .first("COUNT(*)"),
+    ).resolves.toBe(1);
+  });
+
+  it("advances a durable cursor across bounded retirement pages", async () => {
+    await env.DB.batch(
+      Array.from({ length: 26 }, (_, index) => {
+        const suffix = index.toString(16).padStart(64, "0");
+        const replacement = (index + 100).toString(16).padStart(64, "0");
+        return env.DB.prepare(
+          `INSERT INTO authoritative_retirements
+           (event_id,installation_id,repository_id,logical_image_ref,replacement_logical_image_ref,
+            replacement_published_at,replacement_run_url,retired_at,created_at)
+           VALUES (?,'123','9',?,?,1,'https://github.com/owner/repo/actions/runs/42',2,2)`,
+        ).bind(
+          `page-${index}`,
+          `ghcr.io/owner/retired-${index}@sha256:${suffix}`,
+          `ghcr.io/owner/retired-${index}@sha256:${replacement}`,
+        );
+      }),
+    );
+
+    await refreshRetirementCheckpoints(env.DB, now);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state").first("COUNT(*)"),
+    ).resolves.toBe(25);
+    await refreshRetirementCheckpoints(env.DB, now);
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state").first("COUNT(*)"),
+    ).resolves.toBe(26);
   });
 });

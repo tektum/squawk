@@ -1,5 +1,6 @@
 import { sha256 } from "./digest";
 import type { RunDeadline } from "./budget";
+import { describeError } from "./error-detail";
 import {
   currentInventoryGeneration,
   persistRevision,
@@ -16,6 +17,11 @@ type RetirementEvent = ReconciliationImageKey & {
   readonly replacement_published_at: number;
   readonly replacement_run_url: string;
   readonly retired_at: number;
+};
+type RefreshCursor = {
+  readonly installation_id: string | null;
+  readonly repository_id: string | null;
+  readonly logical_image_ref: string | null;
 };
 type CandidateBuilder = (generation: number) => Promise<CheckpointCandidate | null>;
 
@@ -151,24 +157,75 @@ export async function refreshRetirementCheckpoints(
   now = Date.now(),
   deadline?: RunDeadline,
 ): Promise<number> {
+  const cursor = await database
+    .prepare(
+      `SELECT installation_id,repository_id,logical_image_ref
+       FROM retirement_refresh_cursor WHERE singleton=1`,
+    )
+    .first<RefreshCursor>();
   const rows = (
     await database
       .prepare(
-        `SELECT installation_id,repository_id,logical_image_ref FROM authoritative_retirements
-         UNION
-         SELECT r.installation_id,r.repository_id,r.logical_image_ref
-         FROM image_reconciliation_state r
-         WHERE NOT EXISTS (SELECT 1 FROM sboms s WHERE s.installation_id=r.installation_id
-           AND s.repository_id=r.repository_id AND s.logical_image_ref=r.logical_image_ref
-           AND s.retired_at IS NULL)
-         ORDER BY installation_id,repository_id,logical_image_ref`,
+        `WITH candidates AS (
+           SELECT installation_id,repository_id,logical_image_ref FROM authoritative_retirements
+           UNION
+           SELECT r.installation_id,r.repository_id,r.logical_image_ref
+           FROM image_reconciliation_state r
+           WHERE NOT EXISTS (SELECT 1 FROM sboms s WHERE s.installation_id=r.installation_id
+             AND s.repository_id=r.repository_id AND s.logical_image_ref=r.logical_image_ref
+             AND s.retired_at IS NULL)
+         )
+         SELECT installation_id,repository_id,logical_image_ref FROM candidates
+         WHERE (? IS NULL OR installation_id>? OR
+           (installation_id=? AND repository_id>?) OR
+           (installation_id=? AND repository_id=? AND logical_image_ref>?))
+         ORDER BY installation_id,repository_id,logical_image_ref LIMIT 25`,
+      )
+      .bind(
+        cursor?.installation_id ?? null,
+        cursor?.installation_id ?? "",
+        cursor?.installation_id ?? "",
+        cursor?.repository_id ?? "",
+        cursor?.installation_id ?? "",
+        cursor?.repository_id ?? "",
+        cursor?.logical_image_ref ?? "",
       )
       .all<ReconciliationImageKey>()
   ).results;
   let changed = 0;
+  let last: ReconciliationImageKey | undefined;
   for (const image of rows) {
     if (deadline?.expired) break;
-    if (await refreshRetirementCheckpoint(database, image, now)) changed += 1;
+    try {
+      if (await refreshRetirementCheckpoint(database, image, now)) changed += 1;
+    } catch (error) {
+      console.error("Retirement checkpoint refresh failed", {
+        logicalImageRef: image.logical_image_ref,
+        error: describeError(error),
+      });
+    }
+    last = image;
+  }
+  if (last) {
+    const completePage = last === rows.at(-1) && rows.length < 25;
+    await database
+      .prepare(
+        `UPDATE retirement_refresh_cursor SET installation_id=?,repository_id=?,logical_image_ref=?
+         WHERE singleton=1`,
+      )
+      .bind(
+        completePage ? null : last.installation_id,
+        completePage ? null : last.repository_id,
+        completePage ? null : last.logical_image_ref,
+      )
+      .run();
+  } else if (rows.length === 0 && cursor?.installation_id !== null) {
+    await database
+      .prepare(
+        `UPDATE retirement_refresh_cursor SET installation_id=NULL,repository_id=NULL,
+         logical_image_ref=NULL WHERE singleton=1`,
+      )
+      .run();
   }
   return changed;
 }

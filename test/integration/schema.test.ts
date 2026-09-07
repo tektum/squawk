@@ -24,6 +24,7 @@ describe("D1 migration contract", () => {
       "public_activity",
       "image_inventory_generations",
       "reconciliation_refresh_cursor",
+      "retirement_refresh_cursor",
       "advisory_feed_checks",
       "image_reconciliation_state",
       "reconciliation_checkpoints",

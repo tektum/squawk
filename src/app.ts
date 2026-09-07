@@ -114,12 +114,19 @@ app.post("/v1/orgs/:id/reconciliations/:deliveryId/release", async (context) => 
     .string()
     .regex(/^[a-f0-9]{64}$/)
     .parse(context.req.param("deliveryId"));
-  const input = z.object({ attempt_id: z.string().uuid() }).parse(await context.req.json());
+  const input = z
+    .object({
+      attempt_id: z.string().uuid().nullable().optional(),
+      workflow_run_id: z.string().regex(/^\d+$/).nullable().optional(),
+    })
+    .strict()
+    .parse(await context.req.json());
   const released = await releaseQuarantinedReconciliation(
     context.env.DB,
     principal.tenantId,
     deliveryId,
-    input.attempt_id,
+    input.attempt_id ?? null,
+    input.workflow_run_id ?? null,
   );
   return released
     ? context.body(null, 204)

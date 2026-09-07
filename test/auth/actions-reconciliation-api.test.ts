@@ -169,12 +169,10 @@ describe("Actions reconciliation API", () => {
   it("does not enqueue follow-up work while dispatch is paused", async () => {
     const fixture = await seedApi("false");
     await fetchCheckpoint(fixture);
-    const response = await worker.fetch(
-      ackRequest(fixture),
-      fixture.bindings,
-      createExecutionContext(),
-    );
+    const context = createExecutionContext();
+    const response = await worker.fetch(ackRequest(fixture), fixture.bindings, context);
     expect(response.status).toBe(204);
+    await waitOnExecutionContext(context);
     expect(fixture.producer.sent).toEqual([]);
   });
 

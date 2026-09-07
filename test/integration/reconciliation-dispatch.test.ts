@@ -402,6 +402,7 @@ describe("reconciliation workflow dispatch", () => {
         TenantIdSchema.parse("other"),
         message.deliveryId,
         attemptId,
+        null,
       ),
     ).resolves.toBe(false);
     await expect(
@@ -410,10 +411,37 @@ describe("reconciliation workflow dispatch", () => {
         TenantIdSchema.parse("tenant"),
         message.deliveryId,
         attemptId,
+        null,
       ),
     ).resolves.toBe(true);
     await expect(
       env.DB.prepare("SELECT attempt_id FROM reconciliation_deliveries").first("attempt_id"),
     ).resolves.toBeNull();
+
+    const failedAttempt = crypto.randomUUID();
+    await env.DB.prepare(
+      `UPDATE reconciliation_deliveries SET status='failed',attempt_id=?,workflow_run_id='77',
+        error='GitHub 404' WHERE delivery_id=?`,
+    )
+      .bind(failedAttempt, message.deliveryId)
+      .run();
+    await expect(
+      releaseQuarantinedReconciliation(
+        env.DB,
+        TenantIdSchema.parse("tenant"),
+        message.deliveryId,
+        failedAttempt,
+        null,
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      releaseQuarantinedReconciliation(
+        env.DB,
+        TenantIdSchema.parse("tenant"),
+        message.deliveryId,
+        failedAttempt,
+        "77",
+      ),
+    ).resolves.toBe(true);
   });
 });

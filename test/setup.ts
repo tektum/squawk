@@ -29,6 +29,9 @@ beforeEach(async () => {
     env.DB.prepare(
       "UPDATE reconciliation_refresh_cursor SET installation_id=NULL,repository_id=NULL,logical_image_ref=NULL WHERE singleton=1",
     ),
+    env.DB.prepare(
+      "UPDATE retirement_refresh_cursor SET installation_id=NULL,repository_id=NULL,logical_image_ref=NULL WHERE singleton=1",
+    ),
     env.DB.prepare("DELETE FROM sync_cursors"),
     env.DB.prepare("DELETE FROM osv_ecosystems"),
     env.DB.prepare("DELETE FROM github_sources"),

@@ -15,6 +15,7 @@ const subjectIndexSchema = z.object({
   manifests: z
     .array(
       descriptorSchema.extend({
+        mediaType: z.literal("application/vnd.oci.image.manifest.v1+json"),
         platform: z.object({ os: z.string(), architecture: z.string() }),
       }),
     )

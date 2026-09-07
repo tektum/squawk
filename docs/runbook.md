@@ -88,8 +88,10 @@ curl -X POST https://WORKER/v1/orgs/TENANT/reconciliations/DELIVERY_ID/release \
   -d '{"attempt_id":"ATTEMPT_UUID"}'
 ```
 
-The attempt ID is exposed in the authenticated reconciliation jobs view. A mismatched,
-already-dispatched, or non-quarantined attempt is not released.
+The attempt ID is exposed in the authenticated reconciliation jobs view. For a
+terminal failed delivery, include its exact `workflow_run_id` in the JSON body; omit it
+only when the stored value is null. A mismatched, active, or non-quarantined delivery
+is not released.
 
 ## Admin panel
 

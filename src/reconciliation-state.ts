@@ -1,6 +1,7 @@
 import { canonicalJson } from "./canonical-json";
 import type { RunDeadline } from "./budget";
 import { sha256 } from "./digest";
+import { describeError } from "./error-detail";
 import { buildInventoryCandidate } from "./inventory-checkpoint";
 import { currentInventoryGeneration, type InventoryImageKey } from "./inventory-generation";
 import type { ReconciliationReason } from "./reconciliation-contract";
@@ -193,11 +194,7 @@ export async function refreshReconciliationCheckpoints(
       `SELECT installation_id,repository_id,logical_image_ref FROM reconciliation_refresh_cursor
        WHERE singleton=1`,
     )
-    .first<{
-      readonly installation_id: string | null;
-      readonly repository_id: string | null;
-      readonly logical_image_ref: string | null;
-    }>();
+    .first<Record<keyof ReconciliationImageKey, string | null>>();
   const images = (
     await database
       .prepare(
@@ -225,7 +222,11 @@ export async function refreshReconciliationCheckpoints(
   let last: ReconciliationImageKey | undefined;
   for (const image of images) {
     if (deadline?.expired) break;
-    if (await refreshReconciliationImage(database, image, now)) changed += 1;
+    try {
+      if (await refreshReconciliationImage(database, image, now)) changed += 1;
+    } catch (error) {
+      console.error("checkpoint refresh failed", image.logical_image_ref, describeError(error));
+    }
     last = image;
   }
   if (last) {

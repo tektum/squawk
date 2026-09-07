@@ -234,7 +234,7 @@ export async function buildInventoryCandidate(
   };
   const fingerprintPayload = {
     ...payload,
-    coverage: { ...payload.coverage, evaluated_at: 0 },
+    coverage: { ...payload.coverage, evaluated_at: 0, advisory_feed_checked_at: 0 },
   };
   return {
     state: "ready",

@@ -20,6 +20,13 @@ CREATE TABLE reconciliation_refresh_cursor (
   logical_image_ref TEXT
 );
 INSERT INTO reconciliation_refresh_cursor (singleton) VALUES (1);
+CREATE TABLE retirement_refresh_cursor (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  installation_id TEXT,
+  repository_id TEXT,
+  logical_image_ref TEXT
+);
+INSERT INTO retirement_refresh_cursor (singleton) VALUES (1);
 CREATE TABLE advisory_feed_checks (
   checkpoint_id TEXT PRIMARY KEY CHECK (length(checkpoint_id) = 64 AND checkpoint_id NOT GLOB '*[^0-9a-f]*'),
   ecosystem TEXT NOT NULL,
@@ -206,14 +213,26 @@ CREATE TRIGGER bump_generation_feed_insert AFTER INSERT ON advisory_feed_checks 
       AND s.installation_id=image_inventory_generations.installation_id
       AND s.repository_id=image_inventory_generations.repository_id AND s.logical_image_ref=image_inventory_generations.logical_image_ref);
 END;
-CREATE TRIGGER bump_generation_feed_update AFTER UPDATE ON advisory_feed_checks BEGIN
+CREATE TRIGGER bump_generation_feed_update AFTER UPDATE ON advisory_feed_checks
+WHEN OLD.cursor_modified_at IS NOT NEW.cursor_modified_at
+  OR OLD.discovery_complete IS NOT NEW.discovery_complete
+  OR OLD.status IS NOT NEW.status
+  OR OLD.error IS NOT NEW.error
+BEGIN
   UPDATE image_inventory_generations SET generation=generation+1,updated_at=unixepoch()*1000
   WHERE EXISTS (SELECT 1 FROM components c JOIN sboms s ON s.id=c.sbom_id
     WHERE c.matchable=1 AND (c.ecosystem=NEW.ecosystem OR c.ecosystem LIKE NEW.ecosystem || ':%')
       AND s.installation_id=image_inventory_generations.installation_id
       AND s.repository_id=image_inventory_generations.repository_id AND s.logical_image_ref=image_inventory_generations.logical_image_ref);
 END;
-CREATE TRIGGER bump_generation_feed_delete AFTER DELETE ON advisory_feed_checks BEGIN
+CREATE TRIGGER bump_generation_feed_delete AFTER DELETE ON advisory_feed_checks
+WHEN NOT EXISTS (
+  SELECT 1 FROM advisory_feed_checks current
+  WHERE current.ecosystem=OLD.ecosystem
+    AND (current.checked_at>OLD.checked_at
+      OR (current.checked_at=OLD.checked_at AND current.checkpoint_id>OLD.checkpoint_id))
+)
+BEGIN
   UPDATE image_inventory_generations SET generation=generation+1,updated_at=unixepoch()*1000
   WHERE EXISTS (SELECT 1 FROM components c JOIN sboms s ON s.id=c.sbom_id
     WHERE c.matchable=1 AND (c.ecosystem=OLD.ecosystem OR c.ecosystem LIKE OLD.ecosystem || ':%')
