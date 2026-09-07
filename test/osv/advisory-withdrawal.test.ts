@@ -41,7 +41,7 @@ describe("withdrawn OSV advisories", () => {
       ),
     ]);
 
-    advisoryResponse("OSV-1", withdrawn);
+    advisoryResponse("OSV-1", { withdrawn });
     await resolve("OSV-1", 3);
 
     await expect(counts("OSV-1")).resolves.toEqual({
@@ -57,7 +57,7 @@ describe("withdrawn OSV advisories", () => {
   });
 
   it("does not create state for a withdrawn advisory on first ingestion", async () => {
-    advisoryResponse("OSV-1", withdrawn);
+    advisoryResponse("OSV-1", { withdrawn });
     await resolve("OSV-1", 1);
 
     await expect(counts("OSV-1")).resolves.toEqual({
@@ -67,10 +67,45 @@ describe("withdrawn OSV advisories", () => {
     });
   });
 
+  it.each([
+    ["omitted", { omitAffected: true }],
+    ["null", { affected: null }],
+  ] as const)("clears stored state when withdrawn affected is %s", async (_label, options) => {
+    advisoryResponse("OSV-1");
+    await resolve("OSV-1", 1);
+    advisoryResponse("OSV-1", { withdrawn, ...options });
+
+    await resolve("OSV-1", 2);
+    await expect(counts("OSV-1")).resolves.toEqual({
+      findings: 0,
+      matching_errors: 0,
+      vulnerabilities: 0,
+    });
+  });
+
+  it.each([
+    ["omitted", { omitAffected: true }],
+    ["null", { affected: null }],
+  ] as const)(
+    "rejects non-withdrawn affected that is %s without clearing state",
+    async (_label, options) => {
+      advisoryResponse("OSV-1");
+      await resolve("OSV-1", 1);
+      advisoryResponse("OSV-1", options);
+
+      await expect(resolve("OSV-1", 2)).rejects.toThrow();
+      await expect(counts("OSV-1")).resolves.toEqual({
+        findings: 1,
+        matching_errors: 0,
+        vulnerabilities: 1,
+      });
+    },
+  );
+
   it("fails closed on a malformed withdrawn timestamp", async () => {
     advisoryResponse("OSV-1");
     await resolve("OSV-1", 1);
-    advisoryResponse("OSV-1", "not-a-timestamp");
+    advisoryResponse("OSV-1", { withdrawn: "not-a-timestamp" });
 
     await expect(resolve("OSV-1", 2)).rejects.toThrow();
     await expect(counts("OSV-1")).resolves.toEqual({
@@ -87,7 +122,7 @@ describe("withdrawn OSV advisories", () => {
     )
       .bind(jobId, modified)
       .run();
-    advisoryResponse("OSV-Q", withdrawn);
+    advisoryResponse("OSV-Q", { withdrawn });
 
     await processAdvisory({
       database: env.DB,
@@ -115,7 +150,7 @@ describe("withdrawn OSV advisories", () => {
       status: 200,
       body: { results: [{ vulns: [{ id: "OSV-B", modified }] }] },
     });
-    advisoryResponse("OSV-B", withdrawn);
+    advisoryResponse("OSV-B", { withdrawn });
 
     await backfillSbom({
       database: env.DB,
@@ -141,11 +176,24 @@ describe("withdrawn OSV advisories", () => {
   });
 });
 
-function advisoryResponse(id: string, withdrawal?: string): void {
+type AdvisoryResponseOptions = {
+  readonly withdrawn?: string;
+  readonly affected?: typeof affected | null;
+  readonly omitAffected?: boolean;
+};
+
+function advisoryResponse(id: string, options: AdvisoryResponseOptions = {}): void {
   respond({
     url: `https://osv.test/npm/${id}.json`,
     status: 200,
-    body: { id, modified, ...(withdrawal ? { withdrawn: withdrawal } : {}), affected },
+    body: {
+      id,
+      modified,
+      ...(options.withdrawn === undefined ? {} : { withdrawn: options.withdrawn }),
+      ...(options.omitAffected
+        ? {}
+        : { affected: options.affected === undefined ? affected : options.affected }),
+    },
   });
 }
 

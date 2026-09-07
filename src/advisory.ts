@@ -13,34 +13,43 @@ const jobSchema = z.object({
   ecosystem: z.string(),
   modified_at: z.string().datetime(),
 });
-const advisorySchema = z.object({
+const affectedSchema = z.array(
+  z.object({
+    package: z.object({ ecosystem: z.string(), name: z.string() }),
+    ranges: z
+      .array(
+        z.object({
+          type: z.string(),
+          events: z.array(
+            z.object({
+              introduced: z.string().optional(),
+              fixed: z.string().optional(),
+              last_affected: z.string().optional(),
+              limit: z.string().optional(),
+            }),
+          ),
+        }),
+      )
+      .default([]),
+    versions: z.array(z.string()).default([]),
+  }),
+);
+const advisoryMetadataSchema = z.object({
   id: z.string(),
   modified: z.string(),
-  withdrawn: z.string().datetime({ offset: true }).optional(),
   summary: z.string().optional(),
   severity: z.array(z.object({ score: z.string() })).optional(),
-  affected: z.array(
-    z.object({
-      package: z.object({ ecosystem: z.string(), name: z.string() }),
-      ranges: z
-        .array(
-          z.object({
-            type: z.string(),
-            events: z.array(
-              z.object({
-                introduced: z.string().optional(),
-                fixed: z.string().optional(),
-                last_affected: z.string().optional(),
-                limit: z.string().optional(),
-              }),
-            ),
-          }),
-        )
-        .default([]),
-      versions: z.array(z.string()).default([]),
-    }),
-  ),
 });
+const advisorySchema = z.union([
+  advisoryMetadataSchema.extend({
+    withdrawn: z.string().datetime({ offset: true }),
+    affected: affectedSchema.nullish(),
+  }),
+  advisoryMetadataSchema.extend({
+    withdrawn: z.undefined().optional(),
+    affected: affectedSchema,
+  }),
+]);
 const componentSchema = z.object({ id: z.number(), org_id: z.string(), version: z.string() });
 
 /**
@@ -112,11 +121,12 @@ export async function resolveAdvisory(options: {
   );
   if (!response.ok) throw new Error(`OSV advisory failed (${response.status})`);
   const advisory = advisorySchema.parse(await response.json());
-  const relevant = advisory.withdrawn
-    ? []
-    : advisory.affected.filter(
-        (entry) => ecosystemFamily(entry.package.ecosystem) === options.ecosystem,
-      );
+  const relevant =
+    advisory.withdrawn === undefined
+      ? advisory.affected.filter(
+          (entry) => ecosystemFamily(entry.package.ecosystem) === options.ecosystem,
+        )
+      : [];
   const affected = await effectiveAffectedEntries(options.database, relevant);
   const current = new Set(
     affected.map((entry) => `${entry.package.ecosystem}\u0000${entry.package.name}`),
@@ -159,7 +169,7 @@ export async function resolveAdvisory(options: {
 async function persistAffected(
   database: D1Database,
   advisory: z.infer<typeof advisorySchema>,
-  affected: z.infer<typeof advisorySchema>["affected"][number],
+  affected: z.infer<typeof affectedSchema>[number],
   now: number,
 ): Promise<void> {
   const affectedEcosystem = affected.package.ecosystem;
