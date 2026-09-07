@@ -23,8 +23,9 @@ function quote(value: string) {
  * The requeue statement is part of every plan, including no-op reparses.
  * Each changed component is repaired before its identity update: stale findings,
  * matching errors, and undelivered claims are removed, then its live SBOM is requeued.
- * The final requeue is intentionally non-destructive to unrelated findings and makes
- * reruns safe after an interrupted operator session.
+ * Completed advisory jobs that still underpin retained live derived state are reset
+ * for authoritative replay; pending, failed, and running jobs keep their current state.
+ * The final requeue is idempotent and safe to rerun after an interrupted operator session.
  *
  * @param components - Stored components whose ecosystem, matchability, and version values should be reconciled
  * @returns Targeted component repair statements and the idempotent live-SBOM requeue statement
@@ -64,6 +65,16 @@ WHERE NOT EXISTS (
     ON v.id=matching_errors.vuln_id AND v.ecosystem=c.ecosystem AND v.package_name=c.package_name
   WHERE c.id=matching_errors.component_id
 );
+UPDATE osv_advisory_jobs SET status='pending',attempted_at=NULL,error=NULL
+WHERE status='complete' AND EXISTS (
+  SELECT 1 FROM components c JOIN sboms s ON s.id=c.sbom_id
+  WHERE s.retired_at IS NULL
+    AND (c.ecosystem=osv_advisory_jobs.ecosystem OR c.ecosystem LIKE osv_advisory_jobs.ecosystem || ':%')
+    AND (
+      EXISTS (SELECT 1 FROM findings f WHERE f.component_id=c.id AND f.vuln_id=osv_advisory_jobs.advisory_id)
+      OR EXISTS (SELECT 1 FROM matching_errors m WHERE m.component_id=c.id AND m.vuln_id=osv_advisory_jobs.advisory_id)
+    )
+);
 UPDATE sboms SET backfill_status='pending',backfill_error=NULL WHERE retired_at IS NULL;`,
   };
 }
@@ -99,5 +110,5 @@ if (import.meta.main) {
   for (let offset = 0; offset < plan.updates.length; offset += 200)
     await execute(database, plan.updates.slice(offset, offset + 200).join("\n"));
   await execute(database, plan.requeue);
-  console.log("queued re-backfill for every live SBOM");
+  console.log("queued live SBOM backfills and retained advisory replays");
 }

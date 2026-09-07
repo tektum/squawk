@@ -52,9 +52,13 @@ bun scripts/reconcile-ecosystems.ts squawk-staging
 bun scripts/reconcile-github-images.ts squawk-staging CATALOG_URL INSTALLATION_ID REPOSITORY_ID
 ```
 
-Wait for no ingestion jobs, no incomplete active SBOM backfills, and no incomplete
-advisory jobs through each latest feed check. Every image must have one active amd64
-and one active arm64 SBOM whose child digest equals the final OCI index descriptor.
+The ecosystem repair requeues every live SBOM and every completed advisory job that
+still underpins a retained finding or matching error. Pending and running advisory
+claims are left intact. Let the scheduled pipeline replay those jobs against the
+authoritative OSV records so withdrawals remove their derived state, then wait for
+no ingestion jobs, no incomplete active SBOM backfills, and no incomplete advisory
+jobs through each latest feed check. Every image must have one active amd64 and one
+active arm64 SBOM whose child digest equals the final OCI index descriptor.
 `image_reconciliation_state` must be `ready`; Ubuntu or unknown deb coverage must be
 explicitly supported rather than omitted. Old immutable `created_at` values are valid;
 the feed check and evaluation must be current.
