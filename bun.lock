@@ -7,7 +7,7 @@
       "dependencies": {
         "@descope/node-sdk": "2.16.0",
         "hono": "4.13.5",
-        "jose": "6.2.10",
+        "jose": "6.2.11",
         "zod": "4.5.4",
       },
       "devDependencies": {
@@ -423,7 +423,7 @@
 
     "is-node-process": ["is-node-process@1.2.0", "", {}, "sha512-Vg4o6/fqPxIjtxgUH5QLJhwZ7gW5diGCVlXpuUfELC62CuxM1iHcRe51f2W1FDy04Ai4KJkagKjx3XaqyfRKXw=="],
 
-    "jose": ["jose@6.2.10", "", {}, "sha512-iiW7J9qRFlGxvCOIBDBDxFePQSn7ZMAnrYGhrrOo6siO/MIqwfyilLR27pkfDgUk+raLuzADS8A3S/KLBisc0g=="],
+    "jose": ["jose@6.2.11", "", {}, "sha512-A5NPn7g8EAzGU3IzRs+Yiq8K5n3ypYS75M5+KKiVHdUexfpWK1kP4ZMq7QnTGDoMj6TJ1dtcEJjW60yZDXS4hg=="],
 
     "js-cookie": ["js-cookie@3.0.8", "", {}, "sha512-yeJd4aNAdYZQjaon2bpD/Gb0B/omw7HQOsynXXcOiWVCacbBcPlgn8S/d1X6blFSaHao7ozqtW7NZW19xpCtIw=="],
 
