@@ -1,58 +1,20 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildInventoryCandidate } from "../../src/inventory-checkpoint";
 import {
   currentInventoryGeneration,
   persistRevision,
   refreshReconciliationCheckpoints,
 } from "../../src/reconciliation-state";
-import { refreshRetirementCheckpoints } from "../../src/retirement-checkpoint";
 
-const now = 20_000_000;
-const logical = `ghcr.io/owner/demo@sha256:${"a".repeat(64)}`;
-const source = { installation_id: "123", repository_id: "9", logical_image_ref: logical };
-
-async function seedCompleteImage(): Promise<void> {
-  await env.DB.batch([
-    env.DB.prepare("INSERT INTO orgs VALUES ('tenant','app',0)"),
-    env.DB.prepare(
-      "INSERT INTO github_sources (installation_id,repository_id,org_id,dispatch_workflow,dispatch_ref,created_at) VALUES ('123','9','tenant','monitor.yaml','main',0)",
-    ),
-    env.DB.prepare(
-      "INSERT INTO github_deliveries (delivery_id,installation_id,repository_id,statement_sha256,status,created_at,completed_at,subject_digest) VALUES ('ingestion','123','9','statement','accepted',1,2,?)",
-    ).bind(`sha256:${"a".repeat(64)}`),
-    env.DB.prepare(
-      "INSERT INTO advisory_feed_checks (checkpoint_id,ecosystem,cursor_modified_at,checked_at,completed_at,discovery_complete,status) VALUES (?,'Ubuntu','2026-09-06T00:00:00Z',?,?,1,'complete')",
-    ).bind("f".repeat(64), now - 2_000, now - 1_000),
-  ]);
-  for (const [index, platform] of ["linux/amd64", "linux/arm64"].entries()) {
-    const sbom = `sbom-${index}`;
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO sboms (id,org_id,image_ref,logical_image_ref,platform,predicate_sha256,backfill_status,created_at,installation_id,repository_id) VALUES (?,'tenant',?,?,?,?,'complete',1,'123','9')",
-      ).bind(
-        sbom,
-        `ghcr.io/owner/demo@sha256:${String(index + 1).repeat(64)}`,
-        logical,
-        platform,
-        String(index + 3).repeat(64),
-      ),
-      env.DB.prepare(
-        "INSERT INTO components (id,sbom_id,package_name,ecosystem,version,purl,matchable) VALUES (?,?,?,?,?,?,1)",
-      ).bind(
-        index + 1,
-        sbom,
-        "openssl",
-        "Ubuntu:24.04:LTS",
-        "3.0.13-0ubuntu3.15",
-        `pkg:deb/ubuntu/openssl@3.0.13-0ubuntu3.15?arch=${index === 0 ? "amd64" : "arm64"}&distro=ubuntu-24.04`,
-      ),
-    ]);
-  }
-}
+import {
+  reconciliationImage as logical,
+  reconciliationNow as now,
+  reconciliationSource as source,
+  seedCompleteImage,
+} from "./reconciliation-fixture";
 
 describe("reconciliation checkpoint state", () => {
-  beforeEach(seedCompleteImage);
+  beforeEach(() => seedCompleteImage(env.DB));
 
   it("allocates concurrent revisions idempotently without unique failures", async () => {
     const generation = await currentInventoryGeneration(env.DB, source);
@@ -104,160 +66,6 @@ describe("reconciliation checkpoint state", () => {
     expect(payload.revision).not.toBe(999);
   });
 
-  it("cannot publish a clean candidate after a newer ingestion starts", async () => {
-    const clean = await buildInventoryCandidate(env.DB, source, now);
-    await env.DB.prepare(
-      "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,created_at) VALUES (?,'123','9',?,'pending',?)",
-    )
-      .bind(`sha256:${"a".repeat(64)}`, logical, now + 1)
-      .run();
-
-    await expect(persistRevision(env.DB, source, clean, now + 1)).rejects.toThrow();
-    await expect(
-      env.DB.prepare("SELECT COUNT(*) FROM reconciliation_checkpoints").first("COUNT(*)"),
-    ).resolves.toBe(0);
-    await refreshReconciliationCheckpoints(env.DB, now + 1);
-    await expect(
-      env.DB.prepare("SELECT state || ':' || reason FROM image_reconciliation_state").first(
-        "state || ':' || reason",
-      ),
-    ).resolves.toBe("blocked:inventory_incomplete");
-  });
-
-  it("persists a complete two-platform inventory with fresh feed evidence", async () => {
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT INTO vulnerabilities VALUES ('USN-1','Ubuntu:24.04:LTS','openssl','{}','high','summary','2026-09-06T00:00:00Z')",
-      ),
-      env.DB.prepare("INSERT INTO findings VALUES ('tenant',1,'USN-1',1,NULL)"),
-      env.DB.prepare("INSERT INTO findings VALUES ('tenant',2,'USN-1',1,NULL)"),
-    ]);
-
-    await expect(refreshReconciliationCheckpoints(env.DB, now)).resolves.toBe(1);
-    const row = await env.DB.prepare(
-      "SELECT state,revision,payload_json,payload_sha256 FROM reconciliation_checkpoints",
-    ).first<{
-      state: string;
-      revision: number;
-      payload_json: string;
-      payload_sha256: string;
-    }>();
-    expect(row?.state).toBe("ready");
-    expect(row?.revision).toBe(1);
-    expect(row?.payload_sha256).toMatch(/^[a-f0-9]{64}$/);
-    const payload = JSON.parse(row?.payload_json ?? "{}") as {
-      coverage: { advisory_feed_checked_at: number };
-      platforms: { platform: string; image_ref: string }[];
-      findings: { ecosystem: string; platforms: string[] }[];
-    };
-    expect(payload.coverage.advisory_feed_checked_at).toBe(Math.floor((now - 2_000) / 1000));
-    expect(payload.platforms.map(({ platform }) => platform)).toEqual([
-      "linux/amd64",
-      "linux/arm64",
-    ]);
-    expect(payload.findings).toMatchObject([
-      { ecosystem: "Ubuntu:24.04:LTS", platforms: ["linux/amd64", "linux/arm64"] },
-    ]);
-  });
-
-  it("blocks pending advisory jobs even when both SBOM backfills are complete", async () => {
-    await env.DB.prepare(
-      "INSERT INTO osv_advisory_jobs VALUES (?,'Ubuntu','USN-pending','2026-09-05T00:00:00Z','pending',NULL,NULL)",
-    )
-      .bind("9".repeat(64))
-      .run();
-
-    await refreshReconciliationCheckpoints(env.DB, now);
-    await expect(
-      env.DB.prepare("SELECT reason FROM image_reconciliation_state").first("reason"),
-    ).resolves.toBe("feed_incomplete");
-  });
-
-  it("invalidates an older complete check when newer discovery is partial", async () => {
-    await refreshReconciliationCheckpoints(env.DB, now);
-    await env.DB.prepare(
-      "INSERT INTO advisory_feed_checks (checkpoint_id,ecosystem,cursor_modified_at,checked_at,discovery_complete,status) VALUES (?,'Ubuntu','2026-09-07T00:00:00Z',?,0,'pending')",
-    )
-      .bind("7".repeat(64), now + 1)
-      .run();
-
-    await refreshReconciliationCheckpoints(env.DB, now + 1);
-    await expect(
-      env.DB.prepare("SELECT state || ':' || reason FROM image_reconciliation_state").first(
-        "state || ':' || reason",
-      ),
-    ).resolves.toBe("blocked:feed_incomplete");
-  });
-  it("supersedes a ready checkpoint when a newer ingestion is incomplete", async () => {
-    await refreshReconciliationCheckpoints(env.DB, now);
-    await env.DB.prepare(
-      "INSERT INTO github_ingestion_jobs (subject_digest,installation_id,repository_id,logical_image_ref,status,created_at) VALUES (?,'123','9',?,'pending',?)",
-    )
-      .bind(`sha256:${"a".repeat(64)}`, logical, now + 1)
-      .run();
-
-    await refreshReconciliationCheckpoints(env.DB, now + 1);
-    await expect(
-      env.DB.prepare(
-        "SELECT state || ':' || reason || ':' || revision FROM image_reconciliation_state",
-      ).first("state || ':' || reason || ':' || revision"),
-    ).resolves.toBe("blocked:inventory_incomplete:2");
-  });
-
-  it("blocks unsupported package coverage and manual retirement", async () => {
-    await env.DB.prepare(
-      "UPDATE components SET ecosystem='unsupported:deb:ubuntu',matchable=0 WHERE id=1",
-    ).run();
-    await refreshReconciliationCheckpoints(env.DB, now);
-    await expect(
-      env.DB.prepare("SELECT reason FROM image_reconciliation_state").first("reason"),
-    ).resolves.toBe("unsupported_coverage");
-
-    await env.DB.prepare("UPDATE sboms SET retired_at=?")
-      .bind(now + 1)
-      .run();
-    await refreshRetirementCheckpoints(env.DB, now + 1);
-    await expect(
-      env.DB.prepare("SELECT reason FROM image_reconciliation_state").first("reason"),
-    ).resolves.toBe("retirement_unverified");
-  });
-
-  it("blocks a stale feed check even when advisory modification time is unchanged", async () => {
-    await env.DB.prepare("UPDATE advisory_feed_checks SET checked_at=?")
-      .bind(now - 6 * 60 * 60_000 - 1)
-      .run();
-
-    await refreshReconciliationCheckpoints(env.DB, now);
-    await expect(
-      env.DB.prepare("SELECT reason FROM image_reconciliation_state").first("reason"),
-    ).resolves.toBe("feed_stale");
-  });
-
-  it("does not revise inventory for an unchanged feed freshness poll or old-row retention", async () => {
-    await env.DB.prepare(
-      "INSERT INTO advisory_feed_checks (checkpoint_id,ecosystem,cursor_modified_at,checked_at,completed_at,discovery_complete,status) VALUES (?,'Ubuntu','2026-09-05T00:00:00Z',?,?,1,'complete')",
-    )
-      .bind("8".repeat(64), now - 4_000, now - 3_000)
-      .run();
-    await refreshReconciliationCheckpoints(env.DB, now);
-    const generation = await currentInventoryGeneration(env.DB, source);
-
-    await env.DB.prepare(
-      "UPDATE advisory_feed_checks SET checked_at=?,completed_at=? WHERE checkpoint_id=?",
-    )
-      .bind(now + 1_000, now + 1_000, "f".repeat(64))
-      .run();
-    await env.DB.prepare("DELETE FROM advisory_feed_checks WHERE checkpoint_id=?")
-      .bind("8".repeat(64))
-      .run();
-
-    await expect(currentInventoryGeneration(env.DB, source)).resolves.toBe(generation);
-    await expect(refreshReconciliationCheckpoints(env.DB, now + 1_000)).resolves.toBe(0);
-    await expect(
-      env.DB.prepare("SELECT revision FROM image_reconciliation_state").first("revision"),
-    ).resolves.toBe(1);
-  });
-
   it("advances past one image whose checkpoint write fails", async () => {
     const next = `ghcr.io/owner/z-demo@sha256:${"9".repeat(64)}`;
     await env.DB.prepare(
@@ -276,10 +84,16 @@ describe("reconciliation checkpoint state", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
       await refreshReconciliationCheckpoints(env.DB, now);
+      expect(error).toHaveBeenCalledWith("checkpoint refresh failed", logical, expect.any(String));
     } finally {
       await env.DB.prepare("DROP TRIGGER fail_first_checkpoint").run();
       error.mockRestore();
     }
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state WHERE logical_image_ref=?")
+        .bind(logical)
+        .first("COUNT(*)"),
+    ).resolves.toBe(0);
 
     await expect(
       env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state WHERE logical_image_ref=?")
@@ -310,133 +124,6 @@ describe("reconciliation checkpoint state", () => {
       env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state").first("COUNT(*)"),
     ).resolves.toBe(25);
     await refreshReconciliationCheckpoints(env.DB, now);
-    await expect(
-      env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state").first("COUNT(*)"),
-    ).resolves.toBe(26);
-  });
-
-  it("ignores authoritative retirement evidence while the image is active", async () => {
-    await refreshReconciliationCheckpoints(env.DB, now);
-    await env.DB.prepare(
-      `INSERT INTO authoritative_retirements
-       (event_id,installation_id,repository_id,logical_image_ref,replacement_logical_image_ref,
-        replacement_published_at,replacement_run_url,retired_at,created_at)
-       VALUES ('active-event','123','9',?,?,1,'https://github.com/owner/repo/actions/runs/42',2,2)`,
-    )
-      .bind(logical, `ghcr.io/owner/demo@sha256:${"9".repeat(64)}`)
-      .run();
-
-    await expect(refreshRetirementCheckpoints(env.DB, now + 1)).resolves.toBe(0);
-    await expect(
-      env.DB.prepare("SELECT state || ':' || revision FROM image_reconciliation_state").first(
-        "state || ':' || revision",
-      ),
-    ).resolves.toBe("ready:1");
-  });
-  it("emits retirement only from validated replacement evidence", async () => {
-    await refreshReconciliationCheckpoints(env.DB, now);
-    await env.DB.prepare("UPDATE sboms SET retired_at=?")
-      .bind(now + 1)
-      .run();
-    await env.DB.prepare(
-      `INSERT INTO authoritative_retirements
-       (event_id,installation_id,repository_id,logical_image_ref,replacement_logical_image_ref,
-        replacement_published_at,replacement_run_url,retired_at,created_at)
-       VALUES ('retirement-event','123','9',?,?,?,'https://github.com/owner/repo/actions/runs/42',?,?)`,
-    )
-      .bind(logical, `ghcr.io/owner/demo@sha256:${"9".repeat(64)}`, now, now + 1, now + 1)
-      .run();
-    const generation = await currentInventoryGeneration(env.DB, source);
-    await env.DB.prepare(
-      `CREATE TRIGGER inject_retirement_generation_race
-       BEFORE INSERT ON reconciliation_checkpoints
-       WHEN NEW.state='ready' AND (SELECT generation FROM image_inventory_generations
-         WHERE installation_id='123' AND repository_id='9' AND logical_image_ref='${logical}')=${generation}
-       BEGIN
-         UPDATE image_inventory_generations SET generation=generation+1
-         WHERE installation_id='123' AND repository_id='9' AND logical_image_ref='${logical}';
-       END`,
-    ).run();
-    try {
-      await refreshRetirementCheckpoints(env.DB, now + 1);
-    } finally {
-      await env.DB.prepare("DROP TRIGGER inject_retirement_generation_race").run();
-    }
-    const payload = await env.DB.prepare(
-      "SELECT payload_json FROM reconciliation_checkpoints WHERE revision=2",
-    ).first<string>("payload_json");
-    expect(JSON.parse(payload ?? "{}")).toMatchObject({
-      kind: "retirement",
-      authoritative_source_event_id: "retirement-event",
-      replacement: { logical_image_ref: `ghcr.io/owner/demo@sha256:${"9".repeat(64)}` },
-    });
-  });
-
-  it("continues retirement refresh after one image fails", async () => {
-    const second = `ghcr.io/owner/z-retired@sha256:${"8".repeat(64)}`;
-    await refreshReconciliationCheckpoints(env.DB, now);
-    await env.DB.prepare("UPDATE sboms SET retired_at=?")
-      .bind(now + 1)
-      .run();
-    await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO authoritative_retirements
-         (event_id,installation_id,repository_id,logical_image_ref,replacement_logical_image_ref,
-          replacement_published_at,replacement_run_url,retired_at,created_at)
-         VALUES ('first','123','9',?,?,1,'https://github.com/owner/repo/actions/runs/41',2,2)`,
-      ).bind(logical, `ghcr.io/owner/demo@sha256:${"7".repeat(64)}`),
-      env.DB.prepare(
-        `INSERT INTO authoritative_retirements
-         (event_id,installation_id,repository_id,logical_image_ref,replacement_logical_image_ref,
-          replacement_published_at,replacement_run_url,retired_at,created_at)
-         VALUES ('second','123','9',?,?,1,'https://github.com/owner/repo/actions/runs/42',2,2)`,
-      ).bind(second, `ghcr.io/owner/z-retired@sha256:${"9".repeat(64)}`),
-      env.DB.prepare(
-        `CREATE TRIGGER fail_first_retirement BEFORE INSERT ON reconciliation_checkpoints
-         WHEN NEW.logical_image_ref='${logical}'
-         BEGIN SELECT RAISE(FAIL,'injected retirement failure'); END`,
-      ),
-    ]);
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    try {
-      await refreshRetirementCheckpoints(env.DB, now + 1);
-    } finally {
-      await env.DB.prepare("DROP TRIGGER fail_first_retirement").run();
-      error.mockRestore();
-    }
-
-    await expect(
-      env.DB.prepare(
-        "SELECT COUNT(*) FROM image_reconciliation_state WHERE logical_image_ref=? AND state='ready'",
-      )
-        .bind(second)
-        .first("COUNT(*)"),
-    ).resolves.toBe(1);
-  });
-
-  it("advances a durable cursor across bounded retirement pages", async () => {
-    await env.DB.batch(
-      Array.from({ length: 26 }, (_, index) => {
-        const suffix = index.toString(16).padStart(64, "0");
-        const replacement = (index + 100).toString(16).padStart(64, "0");
-        return env.DB.prepare(
-          `INSERT INTO authoritative_retirements
-           (event_id,installation_id,repository_id,logical_image_ref,replacement_logical_image_ref,
-            replacement_published_at,replacement_run_url,retired_at,created_at)
-           VALUES (?,'123','9',?,?,1,'https://github.com/owner/repo/actions/runs/42',2,2)`,
-        ).bind(
-          `page-${index}`,
-          `ghcr.io/owner/retired-${index}@sha256:${suffix}`,
-          `ghcr.io/owner/retired-${index}@sha256:${replacement}`,
-        );
-      }),
-    );
-
-    await refreshRetirementCheckpoints(env.DB, now);
-    await expect(
-      env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state").first("COUNT(*)"),
-    ).resolves.toBe(25);
-    await refreshRetirementCheckpoints(env.DB, now);
     await expect(
       env.DB.prepare("SELECT COUNT(*) FROM image_reconciliation_state").first("COUNT(*)"),
     ).resolves.toBe(26);
