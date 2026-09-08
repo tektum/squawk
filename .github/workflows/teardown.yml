@@ -61,10 +61,15 @@ jobs:
 
       - run: devbox run install
 
-      # The state records a worker version whose modules reference this bundle,
-      # so destroy plans against the same inputs the deploy created.
-      - name: Build Worker bundle
-        run: devbox run -- bun run wrangler deploy --dry-run --outdir .tmp/worker-build --env=""
+      # Destroy reads the recorded worker version from state, never from disk,
+      # so a placeholder module satisfies the declared variable without
+      # rebuilding the gitignored generated matcher and admin sources.
+      - name: Stage a placeholder Worker bundle
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/worker-build
+          printf 'export default { fetch: () => new Response(null, { status: 410 }) };\n' \
+            > .tmp/worker-build/index.js
 
       - name: Destroy Cloudflare resources
         env:
@@ -90,26 +95,42 @@ jobs:
         run: |
           set -euo pipefail
           account="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
-          worker="squawk-${ENVIRONMENT}"
-          read_resource() {
-            curl --fail --silent --show-error \
-              --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-              "${account}/$1"
+          # WORKER is exported so the jq filters can read it without embedding
+          # a shell-looking variable in a single-quoted program.
+          export WORKER="squawk-${ENVIRONMENT}"
+          # Cloudflare list endpoints paginate, so a resource on a later page
+          # must not read as a successful teardown.
+          count_matching() {
+            local path=$1
+            local filter=$2
+            local page=1
+            local pages=1
+            local matches=0
+            local body
+            while [[ "$page" -le "$pages" ]]; do
+              body=$(curl --fail --silent --show-error \
+                --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                "${account}/${path}?page=${page}&per_page=50")
+              matches=$((matches + $(jq \
+                "[.result[]? | select(${filter})] | length" <<<"$body")))
+              pages=$(jq -r '.result_info.total_pages // 1' <<<"$body")
+              page=$((page + 1))
+            done
+            printf '%s' "$matches"
           }
-          workers=$(read_resource workers/scripts |
-            jq --arg worker "$worker" '[.result[]? | select(.id == $worker)] | length')
-          queues=$(read_resource queues |
-            jq --arg worker "$worker" '[.result[]? | select(.queue_name | startswith($worker))] | length')
-          databases=$(read_resource d1/database |
-            jq --arg worker "$worker" '[.result[]? | select(.name == $worker)] | length')
+          workers=$(count_matching workers/scripts '.id == env.WORKER')
+          queues=$(count_matching queues '(.queue_name | startswith(env.WORKER))')
+          databases=$(count_matching d1/database '.name == env.WORKER')
           printf 'remaining workers=%s queues=%s databases=%s\n' "$workers" "$queues" "$databases"
           if [[ "$workers" -ne 0 || "$queues" -ne 0 || "$databases" -ne 0 ]]; then
-            printf '%s still has Cloudflare resources\n' "$worker" >&2
+            printf '%s still has Cloudflare resources\n' "$WORKER" >&2
             exit 1
           fi
 
   github-app:
-    if: inputs.uninstall_app
+    # The installation is shared by both environments, so it is retired only
+    # with the final production teardown.
+    if: inputs.uninstall_app && inputs.environment == 'production'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions: {}
