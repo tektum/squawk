@@ -4,6 +4,7 @@ import { resolveAdvisory } from "./advisory";
 import { type AdvisoryReference, ecosystemFamily, registerAdvisoryJobs } from "./advisory-jobs";
 import type { RunDeadline, SubrequestBudget } from "./budget";
 import { describeError } from "./error-detail";
+import { sha256 } from "./digest";
 
 export const backfillLeaseMilliseconds = 20 * 60_000;
 
@@ -42,11 +43,12 @@ type BackfillOptions = {
  */
 export async function backfillSbom(options: BackfillOptions): Promise<void> {
   const now = options.now ?? Date.now();
+  const leaseSha256 = await sha256(`${options.sbomId}\u0000${now}\u0000${crypto.randomUUID()}`);
   const claim = await options.database
     .prepare(
-      "UPDATE sboms SET backfill_status='running',backfill_attempted_at=?,backfill_error=NULL WHERE id=? AND retired_at IS NULL AND (backfill_status IN ('pending','failed') OR (backfill_status='running' AND COALESCE(backfill_attempted_at,0)<?))",
+      "UPDATE sboms SET backfill_status='running',backfill_attempted_at=?,backfill_error=NULL,backfill_lease_sha256=? WHERE id=? AND retired_at IS NULL AND (backfill_status IN ('pending','failed') OR (backfill_status='running' AND COALESCE(backfill_attempted_at,0)<?))",
     )
-    .bind(now, options.sbomId, now - backfillLeaseMilliseconds)
+    .bind(now, leaseSha256, options.sbomId, now - backfillLeaseMilliseconds)
     .run();
   if (claim.meta.changes === 0) return;
   try {
@@ -106,18 +108,23 @@ export async function backfillSbom(options: BackfillOptions): Promise<void> {
           .run();
       }
     }
-    await options.database
-      .prepare("UPDATE sboms SET backfill_status='complete',backfill_error=NULL WHERE id=?")
-      .bind(options.sbomId)
+    const completed = await options.database
+      .prepare(
+        "UPDATE sboms SET backfill_status='complete',backfill_error=NULL,backfill_lease_sha256=NULL WHERE id=? AND retired_at IS NULL AND backfill_status='running' AND backfill_lease_sha256=?",
+      )
+      .bind(options.sbomId, leaseSha256)
       .run();
-    await recordActivity(options.database, "scan", "completed", now);
+    if (completed.meta.changes > 0)
+      await recordActivity(options.database, "scan", "completed", now);
   } catch (error) {
     const message = describeError(error);
-    await options.database
-      .prepare("UPDATE sboms SET backfill_status='failed',backfill_error=? WHERE id=?")
-      .bind(message.slice(0, 500), options.sbomId)
+    const failed = await options.database
+      .prepare(
+        "UPDATE sboms SET backfill_status='failed',backfill_error=?,backfill_lease_sha256=NULL WHERE id=? AND retired_at IS NULL AND backfill_status='running' AND backfill_lease_sha256=?",
+      )
+      .bind(message.slice(0, 500), options.sbomId, leaseSha256)
       .run();
-    await recordActivity(options.database, "scan", "failed", now);
+    if (failed.meta.changes > 0) await recordActivity(options.database, "scan", "failed", now);
     throw error;
   }
 }
